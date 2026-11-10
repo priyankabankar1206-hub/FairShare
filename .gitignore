@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Python virtual environment
+.venv/
+
 # Python cache
 __pycache__/
 *.pyc
@@ -8,3 +11,7 @@ __pycache__/
 # IDE/editor files
 .vscode/
 .idea/
+
+# Commit data exports — contain real names and emails, never commit these
+*.csv
+data/
