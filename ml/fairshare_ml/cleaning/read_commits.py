@@ -14,7 +14,7 @@ from pydriller import Repository
 # Validation
 # ---------------------------------------------------------------------------
 
-def validate_repo_path(repo_path: str) -> Path:
+def validate_repo_path(repo_path: str) -> None:
     """
     Confirm that repo_path is a valid local git repository.
 
@@ -23,8 +23,8 @@ def validate_repo_path(repo_path: str) -> Path:
       2. It is a directory (not a plain file).
       3. It contains a .git folder (the marker of a git repo).
 
-    Returns a Path object on success; raises a descriptive error otherwise
-    so the caller always knows exactly what went wrong.
+    Returns nothing on success; raises a descriptive error otherwise so the
+    caller always knows exactly what went wrong.
     """
     path = Path(repo_path)
 
@@ -41,8 +41,6 @@ def validate_repo_path(repo_path: str) -> Path:
         raise ValueError(
             f"Not a git repository (no .git folder found): {repo_path}"
         )
-
-    return path
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +100,6 @@ def read_commits(repo_path: str) -> list[dict]:
             "message":       subject,
         })
 
-    # Warn clearly if the repo has no commits yet (a freshly initialised repo)
-    if not commits:
-        print("Warning: This repository has no commits.")
-
     return commits
 
 
@@ -122,7 +116,7 @@ def main() -> None:
       2. Call read_commits() to collect all commit data.
       3. Save every commit to  data/commits.csv  with pandas.
          (The data/ folder is gitignored so real names/emails stay off GitHub.)
-      4. Print the total commit count and a per-author breakdown.
+      4. Print the total commit count and the commits per author.
     """
 
     # --- Step 1: parse arguments ---
@@ -151,31 +145,16 @@ def main() -> None:
     # Build a DataFrame (a table) from the list of commit dicts.
     df = pd.DataFrame(commits)
 
-    # Create the data/ folder if it doesn't exist yet.
-    output_dir = Path("data")
-    output_dir.mkdir(exist_ok=True)          # exist_ok=True means no error if already there
-
-    output_path = output_dir / "commits.csv"
+    output_path = Path("data") / "commits.csv"
+    output_path.parent.mkdir(exist_ok=True)  # create data/ if missing; no error if it exists
     df.to_csv(output_path, index=False)      # index=False keeps the row numbers out of the file
-    print(f"\nSaved {len(commits)} commit(s) to {output_path}")
 
     # --- Step 4: print summary ---
-    # Total commit count
-    print(f"\nTotal commits: {len(commits)}")
+    print(f"\nSaved {len(df)} commit(s) to {output_path}")
 
-    # Commits per author — group the DataFrame by author name and count rows
-    per_author = (
-        df.groupby("author_name")   # collect all rows with the same author name
-        .size()                     # count how many rows (= commits) each author has
-        .sort_values(ascending=False)  # most commits first
-        .reset_index(name="commits")   # give the count column a clear name
-    )
-
+    # value_counts() counts the rows per author name, most commits first.
     print("\nCommits per author:")
-    print("-" * 35)
-    for _, row in per_author.iterrows():
-        # Print each author's name and commit count neatly aligned
-        print(f"  {row['author_name']:<28}  {row['commits']:>4}")
+    print(df["author_name"].value_counts().to_string())
 
 
 if __name__ == "__main__":

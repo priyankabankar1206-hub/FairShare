@@ -15,3 +15,4 @@ __pycache__/
 # Commit data exports — contain real names and emails, never commit these
 *.csv
 data/
+*.png

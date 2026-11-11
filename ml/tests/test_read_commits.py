@@ -250,18 +250,21 @@ class TestDataShape:
     """Every commit dict must have exactly the 9 expected keys and sane types."""
 
     def test_all_nine_keys_present(self, tiny_repo):
+        """Every commit dict has all 9 expected keys."""
         commits = read_commits(str(tiny_repo))
         for c in commits:
             missing = REQUIRED_KEYS - set(c.keys())
             assert not missing, f"Missing keys in commit {c['hash'][:7]}: {missing}"
 
     def test_no_extra_keys(self, tiny_repo):
+        """No commit dict has a key beyond the 9 expected ones."""
         commits = read_commits(str(tiny_repo))
         for c in commits:
             extra = set(c.keys()) - REQUIRED_KEYS
             assert not extra, f"Unexpected keys in commit {c['hash'][:7]}: {extra}"
 
     def test_hash_is_40_char_string(self, tiny_repo):
+        """Every hash is a 40-character string."""
         commits = read_commits(str(tiny_repo))
         for c in commits:
             assert isinstance(c["hash"], str) and len(c["hash"]) == 40
