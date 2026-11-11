@@ -1,10 +1,26 @@
 # Environment variables
 .env
+.env.local
 
-# Python cache
+# Python cache & virtual environments
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
 
 # IDE/editor files
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# FairShare Local file data stores (Section 7.3)
+data/
+models/
+temp/
