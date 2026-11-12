@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
-from baselines import (
+from fairshare_ml.scoring.baselines import (
     MAX_AUTHORS,
     compute_baseline_shares,
     group_small_authors,

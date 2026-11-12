@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from read_commits import validate_repo_path, read_commits
-
+from fairshare_ml.cleaning.read_commits import validate_repo_path, read_commits
 
 # ===========================================================================
 # WHAT IS A FIXTURE?

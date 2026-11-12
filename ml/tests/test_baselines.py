@@ -8,7 +8,7 @@
 import pandas as pd
 import pytest
 
-from baselines import OUTPUT_COLUMNS, compute_baseline_shares
+from fairshare_ml.scoring.baselines import OUTPUT_COLUMNS, compute_baseline_shares
 
 
 def make_commits(rows: list[tuple]) -> pd.DataFrame:
