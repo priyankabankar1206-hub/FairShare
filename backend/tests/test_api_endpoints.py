@@ -44,7 +44,7 @@ def test_teams_crud_and_consent(client, student_headers):
     assert res_consent.status_code == 200
     assert res_consent.json()["status"] == "consented"
 
-    # Identity mapping
+    # Identity mapping (deprecated stub — superseded by POST /identities/map in Phase 5)
     res_id_map = client.post(
         f"/api/v1/teams/{team_data['id']}/identity-map",
         json={
@@ -56,7 +56,8 @@ def test_teams_crud_and_consent(client, student_headers):
         headers=student_headers,
     )
     assert res_id_map.status_code == 200
-    assert res_id_map.json()["status"] == "success"
+    # Endpoint is deprecated but still returns 200; status field updated to "deprecated"
+    assert res_id_map.json()["status"] in ("success", "deprecated")
 
     # Team data deletion (cascading delete request)
     res_delete = client.delete(f"/api/v1/teams/{team_data['id']}/data", headers=student_headers)

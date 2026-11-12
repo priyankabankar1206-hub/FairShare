@@ -153,16 +153,25 @@ async def attach_repository(
 
 @router.post(
     "/teams/{team_id}/identity-map",
-    summary="Fix git identity mappings",
-    description="Maps git author names/emails to actual team member accounts (Section 6.2 & 6.3).",
+    summary="[DEPRECATED] Fix git identity mappings",
+    description=(
+        "This stub endpoint has been superseded by the dedicated Identity Mapping API (Phase 5). "
+        "Use POST /api/v1/teams/{team_id}/identities/map instead."
+    ),
+    deprecated=True,
 )
-async def map_identity(
+async def map_identity_deprecated(
     team_id: str,
     payload: IdentityMappingRequest,
     current_user: CurrentUser = Depends(verify_team_access),
 ):
+    """Deprecated stub — superseded by POST /api/v1/teams/{team_id}/identities/map (Phase 5)."""
     return {
         "status": "success",
+        "message": (
+            "This endpoint is deprecated. "
+            "Use POST /api/v1/teams/{team_id}/identities/map for manual identity mapping."
+        ),
         "team_id": team_id,
         "mapped": {
             "git_email": payload.git_email,

@@ -41,6 +41,13 @@ from app.schemas.github import (
     SyncTriggerRequest,
 )
 from app.schemas.job import JobResponse
+from app.schemas.identity import (
+    GitIdentity,
+    IdentityMappingRecord,
+    ManualMappingRequest,
+    UnmatchedIdentity,
+    IdentityMappingListResponse,
+)
 
 __all__ = [
     "HealthResponse",
@@ -74,4 +81,9 @@ __all__ = [
     "IngestionCheckpoint",
     "SyncTriggerRequest",
     "JobResponse",
+    "GitIdentity",
+    "IdentityMappingRecord",
+    "ManualMappingRequest",
+    "UnmatchedIdentity",
+    "IdentityMappingListResponse",
 ]

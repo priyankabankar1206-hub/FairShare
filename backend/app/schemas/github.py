@@ -13,7 +13,7 @@ class CommitAuthor(BaseModel):
     """Git commit author identity."""
     name: str
     email: str
-    date: datetime
+    date: Optional[datetime] = None
 
 
 class FileChange(BaseModel):
@@ -36,6 +36,10 @@ class MinedCommit(BaseModel):
     deletions: int = 0
     files_changed: List[FileChange] = Field(default_factory=list)
     parent_shas: List[str] = Field(default_factory=list)
+    stats: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Raw stats dict (additions, deletions, total) from GitPython",
+    )
 
 
 class PullRequestRecord(BaseModel):

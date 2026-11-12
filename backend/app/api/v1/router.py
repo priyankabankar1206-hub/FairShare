@@ -4,7 +4,7 @@ Collects and mounts all modular sub-routers under the /api/v1 prefix.
 """
 
 from fastapi import APIRouter
-from app.api.v1.endpoints import health, auth, teams, scores, jobs
+from app.api.v1.endpoints import health, auth, teams, scores, jobs, identities
 
 api_router = APIRouter()
 
@@ -22,3 +22,6 @@ api_router.include_router(scores.router, tags=["Scores & Alerts"])
 
 # Jobs & Background Sync
 api_router.include_router(jobs.router, tags=["Jobs"])
+
+# Identity Mapping & Manual Correction (Phase 5)
+api_router.include_router(identities.router, tags=["Identities"])
