@@ -29,8 +29,8 @@ def make_shares(n_authors: int) -> pd.DataFrame:
     """
     rows = []
     for i in range(1, n_authors + 1):
-        rows += [(f"Person {i:02d}", f"p{i:02d}@uni.edu", 10)] * i
-    commits = pd.DataFrame(rows, columns=["author_name", "author_email", "insertions"])
+        rows += [(f"Person {i:02d}", f"p{i:02d}@uni.edu", 10, 1)] * i
+    commits = pd.DataFrame(rows, columns=["author_name", "author_email", "insertions", "files_changed"])
     return compute_baseline_shares(commits)
 
 
@@ -69,12 +69,15 @@ class TestGrouping:
         assert others["commits"] == 10
         assert others["b1_share"] == pytest.approx(10 / 78)
         assert others["author_name"] == "Others (4)"
+        assert others["files_touched"] == 10
+        assert others["b4_share"] == pytest.approx(10 / 78)
 
     def test_share_columns_still_sum_to_one(self):
         """Grouping does not change the total of either share column."""
         grouped = group_small_authors(make_shares(12))
         assert grouped["b1_share"].sum() == pytest.approx(1.0)
         assert grouped["b2_share"].sum() == pytest.approx(1.0)
+        assert grouped["b4_share"].sum() == pytest.approx(1.0)
 
     def test_kept_authors_are_alphabetical_not_ranked(self):
         """Kept authors are listed alphabetically so the chart does not read as a ranking."""
@@ -123,6 +126,7 @@ class TestPlot:
             "author_name": ["Alice", "Bob"],
             "author_email": ["a@uni.edu", "b@uni.edu"],
             "insertions": [0, 0],
+            "files_changed": [1, 1],
         })
         out = tmp_path / "zero.png"
         plot_baseline_shares(compute_baseline_shares(commits), str(out))
@@ -141,7 +145,7 @@ class TestPlot:
     def test_empty_table_raises(self, tmp_path):
         """An empty shares table gives a clear ValueError."""
         empty = compute_baseline_shares(
-            pd.DataFrame(columns=["author_name", "author_email", "insertions"])
+                        pd.DataFrame(columns=["author_name", "author_email", "insertions", "files_changed"])
         )
         with pytest.raises(ValueError, match="empty"):
             plot_baseline_shares(empty, str(tmp_path / "e.png"))

@@ -13,10 +13,13 @@ from fairshare_ml.scoring.baselines import OUTPUT_COLUMNS, compute_baseline_shar
 
 def make_commits(rows: list[tuple]) -> pd.DataFrame:
     """
-    Build a tiny commits table from (name, email, insertions) tuples.
-    Only the columns the baselines need are included.
+    Build a tiny commits table from (name, email, insertions) tuples,
+    or (name, email, insertions, files_changed) when a test needs it.
+    A row without files_changed counts as 1 file.
     """
-    return pd.DataFrame(rows, columns=["author_name", "author_email", "insertions"])
+    rows = [r if len(r) == 4 else (*r, 1) for r in rows]
+    columns = ["author_name", "author_email", "insertions", "files_changed"]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def share_of(result: pd.DataFrame, email: str, column: str) -> float:
@@ -93,6 +96,7 @@ class TestShareValues:
         result = compute_baseline_shares(commits)
         assert result["b1_share"].sum() == pytest.approx(1.0)
         assert result["b2_share"].sum() == pytest.approx(1.0)
+        assert result["b4_share"].sum() == pytest.approx(1.0)
 
     def test_single_author_gets_everything(self):
         """A one-person team has a 100% share in both baselines."""
@@ -111,6 +115,21 @@ class TestShareValues:
         assert list(result.columns) == OUTPUT_COLUMNS
         # Sorted by email, not by who appeared first
         assert list(result["author_email"]) == ["alice@uni.edu", "bob@uni.edu"]
+
+    def test_b4_is_share_of_files_touched(self):
+        """B4 is each author's share of the files changed."""
+        # Alice touches 1 + 1 = 2 files, Bob touches 6 -> 0.25 and 0.75
+        commits = make_commits([
+            ("Alice", "alice@uni.edu", 10, 1),
+            ("Alice", "alice@uni.edu", 10, 1),
+            ("Bob",   "bob@uni.edu",   10, 6),
+        ])
+        result = compute_baseline_shares(commits)
+        assert share_of(result, "alice@uni.edu", "files_touched") == 2
+        assert share_of(result, "alice@uni.edu", "b4_share") == pytest.approx(0.25)
+        assert share_of(result, "bob@uni.edu", "b4_share") == pytest.approx(0.75)
+        # B1 gives Alice 2/3, so B1 and B4 can disagree too
+        assert share_of(result, "alice@uni.edu", "b1_share") == pytest.approx(2 / 3)
 
 
 # ---------------------------------------------------------------------------
@@ -141,10 +160,20 @@ class TestZeroAndEmpty:
 
     def test_empty_table_returns_empty_result_with_columns(self):
         """An empty commits table gives an empty result with the right columns."""
-        empty = pd.DataFrame(columns=["author_name", "author_email", "insertions"])
+        empty = pd.DataFrame(columns=["author_name", "author_email", "insertions", "files_changed"])
         result = compute_baseline_shares(empty)
         assert result.empty
         assert list(result.columns) == OUTPUT_COLUMNS
+
+    def test_zero_files_total_gives_zero_b4_not_nan(self):
+        """A zero files-changed total gives B4 shares of 0.0, not NaN or a crash."""
+        commits = make_commits([
+            ("Alice", "alice@uni.edu", 5, 0),
+            ("Bob",   "bob@uni.edu",   5, 0),
+        ])
+        result = compute_baseline_shares(commits)
+        assert (result["b4_share"] == 0.0).all()
+        assert not result["b4_share"].isna().any()
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +205,16 @@ class TestInputChecks:
         """A missing 'author_name' column gives a clear ValueError."""
         bad = pd.DataFrame({"author_email": ["a@uni.edu"], "insertions": [3]})
         with pytest.raises(ValueError, match="author_name"):
+            compute_baseline_shares(bad)
+
+    def test_missing_files_changed_column_raises(self):
+        """A missing 'files_changed' column gives a clear ValueError."""
+        bad = pd.DataFrame({
+            "author_name": ["Alice"],
+            "author_email": ["a@uni.edu"],
+            "insertions": [3],
+        })
+        with pytest.raises(ValueError, match="files_changed"):
             compute_baseline_shares(bad)
 
 
@@ -239,6 +278,7 @@ class TestNoFiltering:
             "author_name":  ["Alice", "Alice"],
             "author_email": ["alice@uni.edu", "alice@uni.edu"],
             "insertions":   [10, 0],
+            "files_changed": [1, 0],
             "is_merge":     [False, True],
         })
         result = compute_baseline_shares(commits)
