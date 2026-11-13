@@ -1,0 +1,5 @@
+# FairShare ML dependencies (pinned to the versions the tests pass on)
+matplotlib==3.10.8
+pandas==2.3.1
+PyDriller==2.12
+pytest==9.0.3

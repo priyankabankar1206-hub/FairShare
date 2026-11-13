@@ -8,8 +8,15 @@ from pathlib import Path
 
 import pandas as pd
 from pydriller import Repository
-
-
+# Columns of data/file_changes.csv, in order (one row per changed file).
+FILE_CHANGE_COLUMNS = [
+    "hash",
+    "path",
+    "extension",
+    "lines_added",
+    "lines_deleted",
+    "change_type",
+]
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -102,6 +109,42 @@ def read_commits(repo_path: str) -> list[dict]:
 
     return commits
 
+def read_file_changes(repo_path: str) -> list[dict]:
+    """
+    Walk every commit and return one row per changed file, oldest commit first.
+
+    Each dict has these keys (see FILE_CHANGE_COLUMNS):
+
+      hash          - the commit this change belongs to
+      path          - the file's path inside the repo (the old path if the
+                      file was deleted, the new path if it was renamed)
+      extension     - lower-case ending such as '.py'; '' for names like
+                      'Makefile' or '.gitignore'
+      lines_added   - lines added to this file in this commit
+      lines_deleted - lines removed from this file in this commit
+      change_type   - ADD, MODIFY, DELETE or RENAME (PyDriller's names)
+
+    Nothing is filtered out. Spotting generated files, bots and no-op
+    changes is the hygiene filter's job.
+    """
+    validate_repo_path(repo_path)
+
+    rows: list[dict] = []
+    for commit in Repository(repo_path).traverse_commits():
+        for changed in commit.modified_files:
+            # A deleted file has no new path, so fall back to the old one.
+            # Git paths always use '/', but PyDriller returns '\' on Windows.
+            path = Path(changed.new_path or changed.old_path).as_posix()
+            rows.append({
+                "hash":          commit.hash,
+                "path":          path,
+                "extension":     Path(path).suffix.lower(),
+                "lines_added":   changed.added_lines,
+                "lines_deleted": changed.deleted_lines,
+                "change_type":   changed.change_type.name,
+            })
+
+    return rows
 
 # ---------------------------------------------------------------------------
 # Command-line entry point
@@ -114,8 +157,8 @@ def main() -> None:
     Steps:
       1. Parse the repo path from the command line with argparse.
       2. Call read_commits() to collect all commit data.
-      3. Save every commit to  data/commits.csv  with pandas.
-         (The data/ folder is gitignored so real names/emails stay off GitHub.)
+            3. Save every commit to  data/commits.csv  and every changed file
+         to  data/file_changes.csv  with pandas.
       4. Print the total commit count and the commits per author.
     """
 
@@ -146,15 +189,17 @@ def main() -> None:
     df = pd.DataFrame(commits)
 
     output_path = Path("data") / "commits.csv"
-    output_path.parent.mkdir(exist_ok=True)  # create data/ if missing; no error if it exists
-    df.to_csv(output_path, index=False)      # index=False keeps the row numbers out of the file
+    output_path.parent.mkdir(exist_ok=True)
+    df.to_csv(output_path, index=False)
+
+    # One row per changed file; columns= keeps the header even if there are no rows.
+    file_changes = pd.DataFrame(read_file_changes(args.repo_path), columns=FILE_CHANGE_COLUMNS)
+    file_changes_path = output_path.with_name("file_changes.csv")
+    file_changes.to_csv(file_changes_path, index=False)
 
     # --- Step 4: print summary ---
     print(f"\nSaved {len(df)} commit(s) to {output_path}")
-
-    # value_counts() counts the rows per author name, most commits first.
-    print("\nCommits per author:")
-    print(df["author_name"].value_counts().to_string())
+    print(f"Saved {len(file_changes)} file change(s) to {file_changes_path}")
 
 
 if __name__ == "__main__":
