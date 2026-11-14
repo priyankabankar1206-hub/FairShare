@@ -21,6 +21,7 @@ from fairshare_ml.inference import (
 ALICE = "Alice <alice@uni.edu>"
 ALICE_HOME = "Alice <alice.home@gmail.com>"
 BOB = "Bob <bob@uni.edu>"
+CARA = "Cara <cara@uni.edu>"
 BOT = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>"
 
 
@@ -48,10 +49,18 @@ def _init_repo(path: Path) -> Path:
 
 def _commit(repo: Path, filename: str, add_lines: int, author: str, text: str = "line") -> None:
     """Append `add_lines` lines to `filename` and commit it as `author`."""
+    (repo / filename).parent.mkdir(parents=True, exist_ok=True)
     with open(repo / filename, "a", encoding="utf-8", newline="\n") as f:
         f.write(f"{text}\n" * add_lines)
     _git(["add", "-A"], cwd=str(repo))
     _git(["commit", f"--author={author}", "-m", f"edit {filename}"], cwd=str(repo))
+
+
+def _overwrite(repo: Path, filename: str, text: str, author: str) -> None:
+    """Replace the whole content of `filename` and commit it as `author`."""
+    (repo / filename).write_text(text, encoding="utf-8", newline="\n")
+    _git(["add", "-A"], cwd=str(repo))
+    _git(["commit", f"--author={author}", "-m", f"rewrite {filename}"], cwd=str(repo))
 
 
 @pytest.fixture
@@ -119,9 +128,9 @@ class TestResponseShape:
                                              "docs", "coordination"}
         assert set(response["imbalance"]) == {"gini", "label"}
 
-    def test_model_version_says_stub(self, team_repo):
-        """The stub labels itself, so nobody mistakes it for FairShare-Lite."""
-        assert analyze_repository(make_request(team_repo))["model_version"] == "stub-0.1"
+    def test_model_version_is_lite(self, team_repo):
+        """The response names the model that produced it."""
+        assert analyze_repository(make_request(team_repo))["model_version"] == "lite-0.1"
 
     def test_members_keep_the_request_order(self, team_repo):
         """Members come back in the order they were sent."""
@@ -144,8 +153,8 @@ class TestScores:
         assert share_of(response, "m_3") == 0.0
         assert sum(m["share"] for m in response["members"]) == pytest.approx(1.0)
 
-    def test_code_facet_equals_the_share_in_the_stub(self, team_repo):
-        """In the stub only the code facet is filled."""
+    def test_code_facet_equals_the_share_when_only_code_exists(self, team_repo):
+        """Only code was written, so Alice's code facet equals her share."""
         alice = analyze_repository(make_request(team_repo))["members"][0]
         assert alice["facets"]["code"] == pytest.approx(0.8)
         assert alice["facets"]["review"] == 0.0
@@ -165,8 +174,8 @@ class TestScores:
         """Alice's evidence: the 6-line commit, then the 2-line commit."""
         evidence = analyze_repository(make_request(team_repo))["members"][0]["evidence"]
         assert [e["reason"] for e in evidence] == [
-            "Added 6 lines in 1 file",
-            "Added 2 lines in 1 file",
+            "Added 6 code lines (complexity +0); 100% of added lines survive",
+            "Added 2 code lines (complexity +0); 100% of added lines survive",
         ]
         assert all(len(e["commit"]) == 7 for e in evidence)
 
@@ -206,6 +215,60 @@ class TestScores:
         before = copy.deepcopy(request)
         analyze_repository(request)
         assert request == before
+
+
+class TestLiteRules:
+    """The rules that make FairShare-Lite hard to game, on real repos."""
+
+    def test_member_flag_for_generated_files(self, team_repo):
+        """Alice committed a lock file (generated), so she is flagged; Bob is not."""
+        members = analyze_repository(make_request(team_repo))["members"]
+        assert members[0]["flags"] == ["generated_files"]
+        assert members[1]["flags"] == []
+
+    def test_tests_and_docs_feed_their_own_facets(self, tmp_path):
+        """4 code lines, 4 test lines (x0.5) and 8 doc lines (x0.25) -> shares 0.5 / 0.25 / 0.25."""
+        repo = _init_repo(tmp_path / "mixed")
+        _commit(repo, "app.py", 4, ALICE, text="x = 1")
+        _commit(repo, "tests/test_app.py", 4, BOB, text="y = 2")
+        _commit(repo, "README.md", 8, CARA, text="words")
+        members = analyze_repository(make_request(repo, members=[
+            {"member_id": "m_1", "emails": ["alice@uni.edu"]},
+            {"member_id": "m_2", "emails": ["bob@uni.edu"]},
+            {"member_id": "m_3", "emails": ["cara@uni.edu"]},
+        ]))["members"]
+        assert [m["share"] for m in members] == pytest.approx([0.5, 0.25, 0.25])
+        assert members[0]["facets"]["code"] == 1.0
+        assert members[1]["facets"]["testing"] == 1.0
+        assert members[2]["facets"]["docs"] == 1.0
+
+    def test_overwritten_work_earns_nothing(self, tmp_path):
+        """Bob rewrites all of Alice's 4 lines: only the lines that survive count."""
+        repo = _init_repo(tmp_path / "overwrite")
+        _commit(repo, "a.py", 4, ALICE, text="old")
+        _overwrite(repo, "a.py", "new1\nnew2\nnew3\nnew4\n", BOB)
+        response = analyze_repository(make_request(repo))
+        assert share_of(response, "m_1") == 0.0
+        assert share_of(response, "m_2") == 1.0
+
+    def test_whitespace_only_commit_earns_nothing(self, tmp_path):
+        """Bob adds trailing spaces to Alice's 4 lines: Alice keeps all the credit."""
+        repo = _init_repo(tmp_path / "spaces")
+        _commit(repo, "a.py", 4, ALICE, text="x = 1")
+        _overwrite(repo, "a.py", "x = 1   \n" * 4, BOB)
+        response = analyze_repository(make_request(repo))
+        assert share_of(response, "m_1") == 1.0
+        assert share_of(response, "m_2") == 0.0
+
+    def test_splitting_a_commit_does_not_change_the_share(self, tmp_path):
+        """Alice writes 10 lines in one commit, Bob writes 10 lines in ten commits: 0.5 / 0.5."""
+        repo = _init_repo(tmp_path / "split")
+        _commit(repo, "a.py", 10, ALICE, text="x = 1")
+        for _ in range(10):
+            _commit(repo, "b.py", 1, BOB, text="y = 2")
+        response = analyze_repository(make_request(repo))
+        assert share_of(response, "m_1") == pytest.approx(0.5)
+        assert share_of(response, "m_2") == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
