@@ -1,12 +1,3 @@
-# tests/test_features.py
-# FairShare - Milestone 13
-# Tests for the feature extractor. Path rules and build_features() use small
-# hand-made tables; the rest use a real git repo with hand-checkable numbers.
-#
-# Run:  python -m pytest tests/test_features.py -v
-
-import os
-import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -22,16 +13,13 @@ from fairshare_ml.cleaning.features import (
     read_complexity,
     read_survival,
 )
+from tests.helpers import git, init_repo
 
 ALICE = "Alice <alice@uni.edu>"
 BOB = "Bob <bob@uni.edu>"
 CARA = "Cara <cara@uni.edu>"
 DAN = "Dan <dan@uni.edu>"
 
-
-# ---------------------------------------------------------------------------
-# Path rules
-# ---------------------------------------------------------------------------
 
 class TestPathKinds:
     """The kind of a file is decided from its path alone."""
@@ -67,17 +55,13 @@ class TestPathKinds:
         ("src/app.py", "code"),
         ("tests/test_app.py", "test"),
         ("README.md", "doc"),
-        ("tests/README.md", "doc"),       # docs win over tests
-        ("node_modules/x/tests/a.js", "generated"),   # generated wins over everything
+        ("tests/README.md", "doc"),
+        ("node_modules/x/tests/a.js", "generated"),
     ])
     def test_file_kind(self, path, kind):
         """file_kind() picks generated, then doc, then test, then code."""
         assert file_kind(path) == kind
 
-
-# ---------------------------------------------------------------------------
-# build_features on hand-made tables
-# ---------------------------------------------------------------------------
 
 def _tables():
     """Two commits: h1 adds code+test+a lock file, h2 adds docs only."""
@@ -147,27 +131,6 @@ class TestBuildFeatures:
             pd.testing.assert_frame_equal(table, copy_)
 
 
-# ---------------------------------------------------------------------------
-# Real git repositories
-# ---------------------------------------------------------------------------
-
-def _git(args: list[str], cwd: str) -> None:
-    """Run  git <args>  inside cwd. Line-ending conversion is switched off."""
-    subprocess.run(
-        ["git"] + args, cwd=cwd, check=True, capture_output=True,
-        env={**os.environ, "GIT_CONFIG_COUNT": "1",
-             "GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "false"},
-    )
-
-
-def _init_repo(path: Path) -> Path:
-    """Create an empty git repository at `path`."""
-    path.mkdir()
-    for args in (["init"], ["config", "user.email", "ci@test.com"], ["config", "user.name", "CI"]):
-        _git(args, cwd=str(path))
-    return path
-
-
 def _commit(repo: Path, author: str, message: str, files: dict) -> None:
     """Write `files` ({path: text or bytes}) and commit them as `author`."""
     for name, content in files.items():
@@ -177,14 +140,14 @@ def _commit(repo: Path, author: str, message: str, files: dict) -> None:
             target.write_bytes(content)
         else:
             target.write_text(content, encoding="utf-8", newline="\n")
-    _git(["add", "-A"], cwd=str(repo))
-    _git(["commit", f"--author={author}", "-m", message], cwd=str(repo))
+    git(["add", "-A"], cwd=str(repo))
+    git(["commit", f"--author={author}", "-m", message], cwd=str(repo))
 
 
 F_V1 = "def f(x):\n    return x\n"
 CALC_V2 = F_V1 + "\ndef g(items):\n    for i in items:\n        print(i)\n"
 CALC_V3 = CALC_V2.replace("    return x\n", "    return x + 1\n")
-CALC_V4 = CALC_V3.replace("def f(x):\n", "def f(x):   \n")      # trailing spaces only
+CALC_V4 = CALC_V3.replace("def f(x):\n", "def f(x):   \n")
 
 
 @pytest.fixture
@@ -199,7 +162,7 @@ def history_repo(tmp_path: Path) -> Path:
       c5 Alice  adds tests/test_calc.py (3 lines)
       c6 Alice  adds README.md (2 lines), package-lock.json (50 lines), a binary logo
     """
-    repo = _init_repo(tmp_path / "history")
+    repo = init_repo(tmp_path / "history")
     _commit(repo, ALICE, "c1", {"calc.py": F_V1})
     _commit(repo, BOB, "c2", {"calc.py": CALC_V2})
     _commit(repo, CARA, "c3", {"calc.py": CALC_V3})
@@ -264,7 +227,7 @@ class TestExtractFeatures:
 
     def test_empty_repository_gives_empty_table(self, tmp_path):
         """No commits: an empty table with the right columns, and no crash."""
-        result = extract_features(str(_init_repo(tmp_path / "empty")))
+        result = extract_features(str(init_repo(tmp_path / "empty")))
         assert result.empty
         assert list(result.columns) == FEATURE_COLUMNS
 
@@ -274,10 +237,10 @@ class TestReaders:
 
     def test_removing_code_gives_negative_complexity(self, tmp_path):
         """Deleting a function with complexity 1 gives a delta of -1."""
-        repo = _init_repo(tmp_path / "gone")
+        repo = init_repo(tmp_path / "gone")
         _commit(repo, ALICE, "add", {"calc.py": F_V1})
-        _git(["rm", "calc.py"], cwd=str(repo))
-        _git(["commit", f"--author={BOB}", "-m", "remove"], cwd=str(repo))
+        git(["rm", "calc.py"], cwd=str(repo))
+        git(["commit", f"--author={BOB}", "-m", "remove"], cwd=str(repo))
         assert [r["complexity_delta"] for r in read_complexity(str(repo))] == [1, -1]
 
     def test_complexity_rows_use_forward_slashes(self, history_repo):

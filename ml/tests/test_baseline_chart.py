@@ -1,12 +1,6 @@
-# tests/test_baselines_chart.py
-# FairShare - Milestone 7
-# Tests for the chart code in baselines.py.
-#
-# Run:  pytest tests/test_baselines_chart.py -v
-
 import matplotlib
 
-matplotlib.use("Agg")   # draw into files only, never open a window
+matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -19,7 +13,7 @@ from fairshare_ml.scoring.baselines import (
     plot_baseline_shares,
 )
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"   # the first 8 bytes of every PNG file
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def make_shares(n_authors: int) -> pd.DataFrame:
@@ -34,10 +28,6 @@ def make_shares(n_authors: int) -> pd.DataFrame:
     return compute_baseline_shares(commits)
 
 
-# ---------------------------------------------------------------------------
-# Grouping into "Others"
-# ---------------------------------------------------------------------------
-
 class TestGrouping:
 
     def test_eight_or_fewer_authors_are_unchanged(self):
@@ -50,11 +40,10 @@ class TestGrouping:
         """Nine or more authors become the top eight plus one 'Others' row, listed last."""
         grouped = group_small_authors(make_shares(12))
         assert len(grouped) == MAX_AUTHORS + 1
-        assert grouped["author_email"].iloc[-1] == "(others)"   # Others is last
+        assert grouped["author_email"].iloc[-1] == "(others)"
 
     def test_keeps_the_biggest_authors(self):
         """The biggest contributors are kept; the smallest go into 'Others'."""
-        # Person 12 has the most commits, Person 01 the fewest
         grouped = group_small_authors(make_shares(12))
         kept = set(grouped["author_email"])
         assert "p12@uni.edu" in kept
@@ -65,7 +54,6 @@ class TestGrouping:
         shares = make_shares(12)
         grouped = group_small_authors(shares)
         others = grouped.iloc[-1]
-        # Persons 01-04 are merged: 1+2+3+4 = 10 commits out of 78
         assert others["commits"] == 10
         assert others["b1_share"] == pytest.approx(10 / 78)
         assert others["author_name"] == "Others (4)"
@@ -82,7 +70,7 @@ class TestGrouping:
     def test_kept_authors_are_alphabetical_not_ranked(self):
         """Kept authors are listed alphabetically so the chart does not read as a ranking."""
         grouped = group_small_authors(make_shares(12))
-        kept_emails = list(grouped["author_email"].iloc[:-1])   # without Others
+        kept_emails = list(grouped["author_email"].iloc[:-1])
         assert kept_emails == sorted(kept_emails)
 
     def test_input_table_is_not_modified(self):
@@ -92,10 +80,6 @@ class TestGrouping:
         group_small_authors(shares)
         pd.testing.assert_frame_equal(shares, before)
 
-
-# ---------------------------------------------------------------------------
-# Saving the chart
-# ---------------------------------------------------------------------------
 
 class TestPlot:
 
@@ -121,7 +105,6 @@ class TestPlot:
 
     def test_works_when_all_shares_are_zero(self, tmp_path):
         """An all-zero B2 column still produces a chart."""
-        # Nobody added lines: B2 is all zeros. The chart must still draw.
         commits = pd.DataFrame({
             "author_name": ["Alice", "Bob"],
             "author_email": ["a@uni.edu", "b@uni.edu"],
@@ -140,7 +123,7 @@ class TestPlot:
 
         monkeypatch.setattr(plt, "show", fail_if_called)
         plot_baseline_shares(make_shares(3), str(tmp_path / "x.png"))
-        assert plt.get_fignums() == []   # no figure left open in memory
+        assert plt.get_fignums() == []
 
     def test_empty_table_raises(self, tmp_path):
         """An empty shares table gives a clear ValueError."""

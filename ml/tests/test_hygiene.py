@@ -1,9 +1,3 @@
-# tests/test_hygiene.py
-# FairShare - Milestone 11
-# Tests for the hygiene filter, using small hand-made tables (no git needed).
-#
-# Run:  python -m pytest tests/test_hygiene.py -v
-
 import pandas as pd
 import pytest
 
@@ -41,10 +35,6 @@ def flags_of(commits: list[tuple], files: list[tuple]) -> dict:
     return dict(zip(result["hash"], result["flag"]))
 
 
-# ---------------------------------------------------------------------------
-# Bots
-# ---------------------------------------------------------------------------
-
 class TestIsBot:
     """is_bot() spots automated accounts without catching real people."""
 
@@ -72,10 +62,6 @@ class TestIsBot:
         """A missing name or email (NaN from a CSV) is handled."""
         assert not is_bot(float("nan"), "alice@uni.edu")
 
-
-# ---------------------------------------------------------------------------
-# Generated files
-# ---------------------------------------------------------------------------
 
 class TestIsGeneratedPath:
     """is_generated_path() recognises lock files, build output and vendored code."""
@@ -130,10 +116,6 @@ class TestFlagFileChanges:
         assert list(result["is_generated"]) == [False, True]
         pd.testing.assert_frame_equal(files, before)
 
-
-# ---------------------------------------------------------------------------
-# Commit flags
-# ---------------------------------------------------------------------------
 
 class TestFlagCommits:
     """flag_commits() gives every commit exactly one flag."""

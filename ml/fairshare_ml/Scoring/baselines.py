@@ -1,27 +1,12 @@
-# baselines.py
-# FairShare - Milestones 6 and 7
-# Simple "baseline" contribution shares computed from the commits table.
-#
-#   B1 = each author's share of the total number of commits
-#   B2 = each author's share of the total lines added
-#   B4 = each author's share of the total files changed
-#
-# These are deliberately naive. They are the yardstick FairShare must beat.
-# Nothing is filtered out here: merge commits, bots and whitespace-only
-# commits all count. Cleaning comes later (the "hygiene filter" step).
-
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Columns the commits table must have (read_commits.py writes all of them).
 REQUIRED_COLUMNS = {"author_name", "author_email", "insertions", "files_changed"}
 
-# The chart shows at most this many authors; everyone else becomes "Others".
 MAX_AUTHORS = 8
 
-# Column order of the table compute_baseline_shares() returns.
 OUTPUT_COLUMNS = [
     "author_email",
     "author_name",
@@ -60,38 +45,28 @@ def _to_shares(counts: pd.Series) -> pd.Series:
     return counts / total
 
 
-def _clean_email(emails: pd.Series) -> pd.Series:
-    """
-    Make emails comparable: fill gaps, strip spaces, lower-case.
-
-    'Alice@Uni.edu ' and 'alice@uni.edu' are the same mailbox, so they count
-    as one author. A missing email becomes '(unknown)' so those commits are
-    not silently dropped by groupby.
-    """
-    return emails.fillna("(unknown)").str.strip().str.lower()
-
-
 def compute_baseline_shares(commits: pd.DataFrame) -> pd.DataFrame:
     """
     Compute B1 and B2 shares per author.
 
     Input : the commits DataFrame from read_commits.py. It needs the columns
             'author_name', 'author_email', 'insertions' and 'files_changed'.
+            Emails are compared ignoring case and spaces; a missing email
+            becomes '(unknown)' so those commits are not dropped.
     Output: one row per author, sorted by email so the order is stable
             (columns are listed in OUTPUT_COLUMNS). An empty input gives an
             empty table. The input DataFrame is never modified.
     """
     _require_columns(commits, REQUIRED_COLUMNS, "commits table")
 
-    # assign() builds a new table, so the caller's table stays untouched.
     per_author = (
-        commits.assign(author_email=_clean_email(commits["author_email"]))
+        commits.assign(author_email=commits["author_email"].fillna("(unknown)").str.strip().str.lower())
         .groupby("author_email")
         .agg(
-            author_name=("author_name", "first"),   # first name seen
-            commits=("insertions", "size"),         # rows = commits
-            lines_added=("insertions", "sum"),      # total lines added
-            files_touched=("files_changed", "sum")   # total files changed
+            author_name=("author_name", "first"),
+            commits=("insertions", "size"),
+            lines_added=("insertions", "sum"),
+            files_touched=("files_changed", "sum")
         )
         .reset_index()
     )
@@ -119,7 +94,6 @@ def group_small_authors(
     if len(shares) <= max_authors:
         return shares.copy()
 
-    # Rank 1 = biggest combined share; ties go to whoever comes first.
     score = shares["b1_share"] + shares["b2_share"]
     is_top = score.rank(method="first", ascending=False) <= max_authors
 
@@ -137,7 +111,6 @@ def group_small_authors(
         "b4_share":     rest["b4_share"].sum(),
     }])
 
-    # ignore_index gives a fresh 0..n index (otherwise two rows could share one).
     return pd.concat([top, others], ignore_index=True)
 
 
@@ -160,8 +133,6 @@ def plot_baseline_shares(
 
     data = group_small_authors(shares)
 
-    # One row per author (labelled by name, or email if the name is missing),
-    # one column per baseline, in percent. pandas draws these as grouped bars.
     chart = (
         data.set_index(data["author_name"].fillna(data["author_email"]))
         [["b1_share", "b2_share"]]
@@ -180,13 +151,13 @@ def plot_baseline_shares(
         xlabel="Author",
         ylabel="Share of team total (%)",
     )
-    for bars in ax.containers:                       # one container per baseline
+    for bars in ax.containers:
         ax.bar_label(bars, fmt="%.1f%%", padding=2, fontsize=8)
-    ax.margins(y=0.2)                                # head-room for labels + legend
-    ax.legend(loc="upper center", ncol=2)            # fixed spot, never over a bar
-    plt.setp(ax.get_xticklabels(), ha="right")       # tilted names end at their bar
+    ax.margins(y=0.2)
+    ax.legend(loc="upper center", ncol=2)
+    plt.setp(ax.get_xticklabels(), ha="right")
 
     out = Path(output_path)
-    ax.figure.savefig(out, dpi=150, bbox_inches="tight")   # file only, no window
-    plt.close(ax.figure)                                   # free the memory
+    ax.figure.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(ax.figure)
     return out

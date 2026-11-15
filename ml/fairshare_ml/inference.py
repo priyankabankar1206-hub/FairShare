@@ -1,8 +1,3 @@
-# inference.py
-# FairShare - Milestones 12 and 14
-# The one function the backend calls: analyze_repository(request) -> dict.
-# The scoring itself lives in scoring/lite.py (FairShare-Lite).
-
 from datetime import date
 
 import pandas as pd
@@ -12,14 +7,14 @@ from fairshare_ml.cleaning.read_commits import read_commits
 from fairshare_ml.scoring.flags import split_commit_members
 from fairshare_ml.scoring.lite import (
     MODEL_VERSION,
+    POINT_COLUMNS,
     commit_points,
     evidence_reason,
     score_members,
 )
 
-MAX_EVIDENCE = 5               # evidence items per member
+MAX_EVIDENCE = 5
 FACETS = ("code", "review", "testing", "docs", "coordination")
-POINT_COLUMNS = ["code_points", "test_points", "doc_points"]
 
 
 def gini_coefficient(shares: list[float]) -> float:
@@ -79,10 +74,10 @@ def _check_request(request: dict) -> None:
             raise ValueError(f"duplicate member_id: {member['member_id']}")
         seen_ids.add(member["member_id"])
         for email in member["emails"]:
-            # The error does not repeat the email: it is personal data.
-            if _normalise(email) in seen_emails:
+            key = _normalise(email)
+            if key in seen_emails:
                 raise ValueError("an email is listed for more than one member")
-            seen_emails.add(_normalise(email))
+            seen_emails.add(key)
 
 
 def _evidence(rows: pd.DataFrame) -> list[dict]:
@@ -130,10 +125,9 @@ def analyze_repository(request: dict) -> dict:
     }
 
     commits = read_commits(request["repo_path"])
-    scored = commit_points(extract_features(request["repo_path"]))
+    scored = commit_points(extract_features(request["repo_path"], commits))
     scored["member_id"] = scored["author_email"].map(_normalise).map(email_to_member)
 
-    # Which commits count, and did anyone real appear who is not a member?
     real_people = ~scored["flag"].isin(["bot", "merge"])
     has_unmapped = bool((real_people & scored["member_id"].isna()).any())
     counted = scored[(scored["flag"] == "substantive") & scored["member_id"].notna()]
@@ -163,13 +157,12 @@ def analyze_repository(request: dict) -> dict:
     ]
 
     gini = gini_coefficient([report["share"] for report in reports])
-    warnings = []
-    if insufficient:
-        warnings.append("insufficient_data")
-    if has_unmapped:
-        warnings.append("unmapped_authors")
+    warnings = [
+        name
+        for name, active in (("insufficient_data", insufficient), ("unmapped_authors", has_unmapped))
+        if active
+    ]
 
-    # as_of is the newest commit's date, so the same input gives the same output.
     as_of = (
         max(c["author_date"] for c in commits).date().isoformat()
         if commits else date.today().isoformat()

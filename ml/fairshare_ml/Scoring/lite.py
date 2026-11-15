@@ -1,30 +1,13 @@
-# lite.py
-# FairShare - Milestone 14
-# FairShare-Lite: the Tier 1 score. No learning, just rules anyone can check.
-#
-# Every commit that counts as real work earns "points":
-#
-#   code points = surviving code lines x (1 + 5 x complexity per line)
-#   test points = surviving test lines x 0.5
-#   doc points  = surviving doc lines  x 0.25
-#
-# "Surviving" means the line is still in the final code (see features.py), so
-# work that is later deleted or overwritten earns nothing, and so does a
-# whitespace-only edit. A member's share is their points divided by the
-# team's points. Each facet is the member's share of the team's points in
-# that facet. Review and coordination need GitHub review and issue data,
-# which Tier 1 does not receive yet, so they stay 0.0.
-#
-# The four numbers below are starting values to calibrate with the team.
-
 import pandas as pd
 
 MODEL_VERSION = "lite-0.1"
 
-COMPLEXITY_WEIGHT = 5.0        # one complexity point per line counts as 5x extra
-MAX_COMPLEXITY_DENSITY = 0.3   # cap, so one-line "if" commits cannot be farmed
-TEST_WEIGHT = 0.5              # a surviving test line is worth half a code line
-DOC_WEIGHT = 0.25              # a surviving doc line is worth a quarter
+COMPLEXITY_WEIGHT = 5.0
+MAX_COMPLEXITY_DENSITY = 0.3
+TEST_WEIGHT = 0.5
+DOC_WEIGHT = 0.25
+
+POINT_COLUMNS = ["code_points", "test_points", "doc_points"]
 
 
 def commit_points(features: pd.DataFrame) -> pd.DataFrame:
@@ -38,9 +21,7 @@ def commit_points(features: pd.DataFrame) -> pd.DataFrame:
     code_lines = features["code_lines"].astype(float)
     complexity = features["complexity_delta"].astype(float).clip(lower=0)
 
-    # Complexity added per line of code, capped; 0 when no code lines were added.
-    density = (complexity / code_lines.where(code_lines > 0)).fillna(0.0)
-    density = density.clip(upper=MAX_COMPLEXITY_DENSITY)
+    density = (complexity / code_lines.where(code_lines > 0)).fillna(0.0).clip(upper=MAX_COMPLEXITY_DENSITY)
 
     code = features["surviving_code"].astype(float) * (1 + COMPLEXITY_WEIGHT * density)
     test = features["surviving_test"].astype(float) * TEST_WEIGHT
@@ -74,7 +55,7 @@ def score_members(points: pd.DataFrame) -> pd.DataFrame:
             coordination are always 0.0 in Tier 1.
     """
     scores = pd.DataFrame(index=points.index)
-    scores["share"] = _share(points[["code_points", "test_points", "doc_points"]].sum(axis=1))
+    scores["share"] = _share(points[POINT_COLUMNS].sum(axis=1))
     scores["code"] = _share(points["code_points"])
     scores["review"] = 0.0
     scores["testing"] = _share(points["test_points"])

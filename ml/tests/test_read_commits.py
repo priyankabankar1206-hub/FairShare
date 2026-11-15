@@ -1,71 +1,10 @@
-# tests/test_read_commits.py
-# FairShare – Milestone 4
-# Tests for read_commits.py using a real (but temporary) git repo.
-#
-# Run all tests:        pytest tests/
-# Run with details:     pytest tests/test_read_commits.py -v
-
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from fairshare_ml.cleaning.read_commits import validate_repo_path, read_commits
+from tests.helpers import git
 
-# ===========================================================================
-# WHAT IS A FIXTURE?
-# ===========================================================================
-# A fixture is a function marked with @pytest.fixture that *sets something up*
-# before a test runs — like creating a file, a database row, or in our case
-# a tiny git repo.
-#
-# How it works:
-#   1. You write a function and decorate it with @pytest.fixture.
-#   2. Any test that lists the fixture's name as a parameter will
-#      automatically receive whatever the fixture returns.
-#   3. pytest handles calling the fixture and passing the value in — you
-#      never call the fixture yourself.
-#
-# Example:
-#   @pytest.fixture
-#   def my_number():
-#       return 42
-#
-#   def test_something(my_number):   # pytest sees "my_number", calls the fixture
-#       assert my_number == 42       # gets 42 injected automatically
-#
-# The built-in `tmp_path` fixture (provided by pytest itself) gives each test
-# its own fresh temporary folder on disk that is deleted after the test.
-# ===========================================================================
-
-
-# ---------------------------------------------------------------------------
-# Helper: run a git command inside a directory
-# ---------------------------------------------------------------------------
-
-def _git(args: list[str], cwd: str) -> None:
-    """
-    Run  git <args>  inside the folder at cwd.
-    capture_output=True  hides git's messages from the test output.
-    check=True           raises an error automatically if git fails.
-    """
-    subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        # Pass the current process environment so git can find itself,
-        # but disable Windows line-ending conversion so counts are predictable.
-        env={**os.environ, "GIT_CONFIG_COUNT": "1",
-             "GIT_CONFIG_KEY_0": "core.autocrlf",
-             "GIT_CONFIG_VALUE_0": "false"},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Fixture: tiny_repo
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def tiny_repo(tmp_path: Path) -> Path:
@@ -85,49 +24,39 @@ def tiny_repo(tmp_path: Path) -> Path:
     """
     repo = tmp_path / "repo"
     repo.mkdir()
-    r = str(repo)   # subprocess wants a plain string, not a Path object
+    r = str(repo)
 
-    # Initialise an empty git repo
-    _git(["init"], cwd=r)
+    git(["init"], cwd=r)
 
-    # Set a local committer identity so git commit doesn't complain.
-    # (The author identity is set per-commit below with --author.)
-    _git(["config", "user.email", "ci@test.com"], cwd=r)
-    _git(["config", "user.name",  "CI"],           cwd=r)
+    git(["config", "user.email", "ci@test.com"], cwd=r)
+    git(["config", "user.name",  "CI"],           cwd=r)
 
-    # ── Commit 1: Alice creates hello.py (3 lines) ──────────────────────────
     (repo / "hello.py").write_text("line_a\nline_b\nline_c\n",
                                    encoding="utf-8")
-    _git(["add", "hello.py"], cwd=r)
-    _git(["commit",
+    git(["add", "hello.py"], cwd=r)
+    git(["commit",
           "--author=Alice <alice@uni.edu>",
           "-m", "Alice: create hello.py"],
          cwd=r)
 
-    # ── Commit 2: Alice appends one line to hello.py (1 insertion) ──────────
     (repo / "hello.py").write_text("line_a\nline_b\nline_c\nline_d\n",
                                    encoding="utf-8")
-    _git(["add", "hello.py"], cwd=r)
-    _git(["commit",
+    git(["add", "hello.py"], cwd=r)
+    git(["commit",
           "--author=Alice <alice@uni.edu>",
           "-m", "Alice: append line_d"],
          cwd=r)
 
-    # ── Commit 3: Bob creates world.py (2 lines) ────────────────────────────
     (repo / "world.py").write_text("world_x\nworld_y\n",
                                    encoding="utf-8")
-    _git(["add", "world.py"], cwd=r)
-    _git(["commit",
+    git(["add", "world.py"], cwd=r)
+    git(["commit",
           "--author=Bob <bob@uni.edu>",
           "-m", "Bob: create world.py"],
          cwd=r)
 
-    return repo   # hand the path to any test that requests this fixture
+    return repo
 
-
-# ===========================================================================
-# Test class 1 – validation (no real repo needed)
-# ===========================================================================
 
 class TestValidation:
     """These tests check the guard clauses before PyDriller even starts."""
@@ -139,7 +68,6 @@ class TestValidation:
 
     def test_plain_folder_raises_value_error(self, tmp_path):
         """A folder with no .git sub-folder must raise ValueError."""
-        # tmp_path is a real, empty directory — not a git repo
         with pytest.raises(ValueError, match="Not a git repository"):
             validate_repo_path(str(tmp_path))
 
@@ -153,10 +81,6 @@ class TestValidation:
         with pytest.raises(ValueError):
             read_commits(str(tmp_path))
 
-
-# ===========================================================================
-# Test class 2 – commit count and authors
-# ===========================================================================
 
 class TestCommitCountAndAuthors:
     """Check the number of commits and who made them."""
@@ -190,10 +114,6 @@ class TestCommitCountAndAuthors:
         bob_count = sum(1 for c in commits if c["author_name"] == "Bob")
         assert bob_count == 1
 
-
-# ===========================================================================
-# Test class 3 – line counts per commit
-# ===========================================================================
 
 class TestLineCounts:
     """
@@ -236,14 +156,11 @@ class TestLineCounts:
         assert commits[2]["deletions"] == 0
 
 
-# ===========================================================================
-# Test class 4 – data shape (all 9 keys, correct types)
-# ===========================================================================
-
 REQUIRED_KEYS = {
     "hash", "author_name", "author_email", "author_date",
     "insertions", "deletions", "files_changed", "is_merge", "message",
 }
+
 
 class TestDataShape:
     """Every commit dict must have exactly the 9 expected keys and sane types."""
@@ -272,7 +189,7 @@ class TestDataShape:
         """None of our 3 simple commits is a merge — all must be False."""
         commits = read_commits(str(tiny_repo))
         for c in commits:
-            assert type(c["is_merge"]) is bool   # must be bool, not int
+            assert type(c["is_merge"]) is bool
             assert c["is_merge"] is False
 
     def test_message_has_no_newline(self, tiny_repo):

@@ -1,11 +1,3 @@
-# tests/test_file_changes.py
-# FairShare - Milestone 10
-# Tests for read_file_changes() and the CSV files main() writes.
-#
-# Run:  python -m pytest tests/test_file_changes.py -v
-
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -18,19 +10,7 @@ from fairshare_ml.cleaning.read_commits import (
     read_commits,
     read_file_changes,
 )
-
-
-def _git(args: list[str], cwd: str) -> None:
-    """Run  git <args>  inside cwd. Line-ending conversion is switched off."""
-    subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        env={**os.environ, "GIT_CONFIG_COUNT": "1",
-             "GIT_CONFIG_KEY_0": "core.autocrlf",
-             "GIT_CONFIG_VALUE_0": "false"},
-    )
+from tests.helpers import git
 
 
 @pytest.fixture
@@ -49,34 +29,29 @@ def files_repo(tmp_path: Path) -> Path:
     repo.mkdir()
     r = str(repo)
 
-    _git(["init"], cwd=r)
-    _git(["config", "user.email", "ci@test.com"], cwd=r)
-    _git(["config", "user.name", "CI"], cwd=r)
+    git(["init"], cwd=r)
+    git(["config", "user.email", "ci@test.com"], cwd=r)
+    git(["config", "user.name", "CI"], cwd=r)
 
     def commit(author: str, message: str) -> None:
         """Stage everything (including deletions) and commit as `author`."""
-        _git(["add", "-A"], cwd=r)
-        _git(["commit", f"--author={author}", "-m", message], cwd=r)
+        git(["add", "-A"], cwd=r)
+        git(["commit", f"--author={author}", "-m", message], cwd=r)
 
-    # Commit 1: two new files
     (repo / "a.py").write_text("a1\na2\na3\n", encoding="utf-8")
     (repo / "b.py").write_text("b1\nb2\n", encoding="utf-8")
     commit("Alice <alice@uni.edu>", "add a.py and b.py")
 
-    # Commit 2: one edit, one nested file with an upper-case extension,
-    # one file with no extension
     (repo / "a.py").write_text("a1\nCHANGED\na3\n", encoding="utf-8")
     (repo / "docs").mkdir()
     (repo / "docs" / "NOTES.TXT").write_text("note\n", encoding="utf-8")
     (repo / "Makefile").write_text("all:\n", encoding="utf-8")
     commit("Bob <bob@uni.edu>", "edit a.py, add notes and Makefile")
 
-    # Commit 3: delete a file
     (repo / "b.py").unlink()
     commit("Alice <alice@uni.edu>", "delete b.py")
 
-    # Commit 4: rename a file without changing it
-    _git(["mv", "a.py", "c.py"], cwd=r)
+    git(["mv", "a.py", "c.py"], cwd=r)
     commit("Bob <bob@uni.edu>", "rename a.py to c.py")
 
     return repo
@@ -169,7 +144,7 @@ class TestMain:
         """commits.csv keeps its 9 columns and file_changes.csv has 7 rows."""
         work = tmp_path / "work"
         work.mkdir()
-        monkeypatch.chdir(work)   # main() writes to ./data
+        monkeypatch.chdir(work)
         monkeypatch.setattr(sys, "argv", ["read_commits", str(files_repo)])
 
         main()

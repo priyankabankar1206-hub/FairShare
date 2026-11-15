@@ -1,12 +1,4 @@
-# tests/test_inference.py
-# FairShare - Milestone 12
-# Tests for analyze_repository(), the one function the backend calls.
-#
-# Run:  python -m pytest tests/test_inference.py -v
-
 import copy
-import os
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,6 +9,7 @@ from fairshare_ml.inference import (
     gini_coefficient,
     imbalance_label,
 )
+from tests.helpers import git, init_repo
 
 ALICE = "Alice <alice@uni.edu>"
 ALICE_HOME = "Alice <alice.home@gmail.com>"
@@ -25,42 +18,20 @@ CARA = "Cara <cara@uni.edu>"
 BOT = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>"
 
 
-def _git(args: list[str], cwd: str) -> None:
-    """Run  git <args>  inside cwd. Line-ending conversion is switched off."""
-    subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        env={**os.environ, "GIT_CONFIG_COUNT": "1",
-             "GIT_CONFIG_KEY_0": "core.autocrlf",
-             "GIT_CONFIG_VALUE_0": "false"},
-    )
-
-
-def _init_repo(path: Path) -> Path:
-    """Create an empty git repository at `path`."""
-    path.mkdir()
-    _git(["init"], cwd=str(path))
-    _git(["config", "user.email", "ci@test.com"], cwd=str(path))
-    _git(["config", "user.name", "CI"], cwd=str(path))
-    return path
-
-
 def _commit(repo: Path, filename: str, add_lines: int, author: str, text: str = "line") -> None:
     """Append `add_lines` lines to `filename` and commit it as `author`."""
     (repo / filename).parent.mkdir(parents=True, exist_ok=True)
     with open(repo / filename, "a", encoding="utf-8", newline="\n") as f:
         f.write(f"{text}\n" * add_lines)
-    _git(["add", "-A"], cwd=str(repo))
-    _git(["commit", f"--author={author}", "-m", f"edit {filename}"], cwd=str(repo))
+    git(["add", "-A"], cwd=str(repo))
+    git(["commit", f"--author={author}", "-m", f"edit {filename}"], cwd=str(repo))
 
 
 def _overwrite(repo: Path, filename: str, text: str, author: str) -> None:
     """Replace the whole content of `filename` and commit it as `author`."""
     (repo / filename).write_text(text, encoding="utf-8", newline="\n")
-    _git(["add", "-A"], cwd=str(repo))
-    _git(["commit", f"--author={author}", "-m", f"rewrite {filename}"], cwd=str(repo))
+    git(["add", "-A"], cwd=str(repo))
+    git(["commit", f"--author={author}", "-m", f"rewrite {filename}"], cwd=str(repo))
 
 
 @pytest.fixture
@@ -76,7 +47,7 @@ def team_repo(tmp_path: Path) -> Path:
 
     Counted work: Alice 6 + 2 = 8 lines, Bob 2 lines -> shares 0.8 / 0.2.
     """
-    repo = _init_repo(tmp_path / "team_repo")
+    repo = init_repo(tmp_path / "team_repo")
     _commit(repo, "a.py", 6, ALICE)
     _commit(repo, "b.py", 2, BOB)
     _commit(repo, "package-lock.json", 500, ALICE, text="{}")
@@ -104,10 +75,6 @@ def share_of(response: dict, member_id: str) -> float:
     """Pick one member's share from a response."""
     return next(m["share"] for m in response["members"] if m["member_id"] == member_id)
 
-
-# ---------------------------------------------------------------------------
-# Shape of the response (the contract)
-# ---------------------------------------------------------------------------
 
 class TestResponseShape:
     """The response has exactly the shape the backend's schema expects."""
@@ -137,10 +104,6 @@ class TestResponseShape:
         response = analyze_repository(make_request(team_repo))
         assert [m["member_id"] for m in response["members"]] == ["m_1", "m_2", "m_3"]
 
-
-# ---------------------------------------------------------------------------
-# The numbers
-# ---------------------------------------------------------------------------
 
 class TestScores:
     """Shares, evidence, imbalance and dates are correct on a known repo."""
@@ -228,7 +191,7 @@ class TestLiteRules:
 
     def test_tests_and_docs_feed_their_own_facets(self, tmp_path):
         """4 code lines, 4 test lines (x0.5) and 8 doc lines (x0.25) -> shares 0.5 / 0.25 / 0.25."""
-        repo = _init_repo(tmp_path / "mixed")
+        repo = init_repo(tmp_path / "mixed")
         _commit(repo, "app.py", 4, ALICE, text="x = 1")
         _commit(repo, "tests/test_app.py", 4, BOB, text="y = 2")
         _commit(repo, "README.md", 8, CARA, text="words")
@@ -244,7 +207,7 @@ class TestLiteRules:
 
     def test_overwritten_work_earns_nothing(self, tmp_path):
         """Bob rewrites all of Alice's 4 lines: only the lines that survive count."""
-        repo = _init_repo(tmp_path / "overwrite")
+        repo = init_repo(tmp_path / "overwrite")
         _commit(repo, "a.py", 4, ALICE, text="old")
         _overwrite(repo, "a.py", "new1\nnew2\nnew3\nnew4\n", BOB)
         response = analyze_repository(make_request(repo))
@@ -253,9 +216,9 @@ class TestLiteRules:
 
     def test_whitespace_only_commit_earns_nothing(self, tmp_path):
         """Bob adds trailing spaces to Alice's 4 lines: Alice keeps all the credit."""
-        repo = _init_repo(tmp_path / "spaces")
+        repo = init_repo(tmp_path / "spaces")
         _commit(repo, "a.py", 4, ALICE, text="x = 1")
-        _commit(repo, "b.py", 2, ALICE, text="y = 2")     # Alice needs 2 real commits
+        _commit(repo, "b.py", 2, ALICE, text="y = 2")
         _overwrite(repo, "a.py", "x = 1   \n" * 4, BOB)
         response = analyze_repository(make_request(repo))
         assert share_of(response, "m_1") == 1.0
@@ -263,7 +226,7 @@ class TestLiteRules:
 
     def test_splitting_a_commit_does_not_change_the_share(self, tmp_path):
         """Alice writes 10 lines in one commit, Bob writes 10 lines in ten commits: 0.5 / 0.5."""
-        repo = _init_repo(tmp_path / "split")
+        repo = init_repo(tmp_path / "split")
         _commit(repo, "a.py", 10, ALICE, text="x = 1")
         for _ in range(10):
             _commit(repo, "b.py", 1, BOB, text="y = 2")
@@ -271,10 +234,6 @@ class TestLiteRules:
         assert share_of(response, "m_1") == pytest.approx(0.5)
         assert share_of(response, "m_2") == pytest.approx(0.5)
 
-
-# ---------------------------------------------------------------------------
-# Warnings and edge cases
-# ---------------------------------------------------------------------------
 
 class TestWarningsAndEdges:
     """Unusual repos never crash and say what is wrong."""
@@ -290,7 +249,7 @@ class TestWarningsAndEdges:
 
     def test_single_commit_is_insufficient_data(self, tmp_path):
         """One commit is not enough: warning, and all shares are 0.0."""
-        repo = _init_repo(tmp_path / "one")
+        repo = init_repo(tmp_path / "one")
         _commit(repo, "a.py", 5, ALICE)
         response = analyze_repository(make_request(repo))
         assert "insufficient_data" in response["warnings"]
@@ -298,7 +257,7 @@ class TestWarningsAndEdges:
 
     def test_empty_repository_does_not_crash(self, tmp_path):
         """A repo with no commits gives insufficient_data and a valid response."""
-        repo = _init_repo(tmp_path / "empty")
+        repo = init_repo(tmp_path / "empty")
         response = analyze_repository(make_request(repo))
         assert "insufficient_data" in response["warnings"]
         assert len(response["members"]) == 3
@@ -306,7 +265,7 @@ class TestWarningsAndEdges:
 
     def test_team_of_one_gets_the_whole_share(self, tmp_path):
         """A one-person team has a share of exactly 1 and a balanced label."""
-        repo = _init_repo(tmp_path / "solo")
+        repo = init_repo(tmp_path / "solo")
         _commit(repo, "a.py", 3, ALICE)
         _commit(repo, "a.py", 4, ALICE)
         request = {"team_id": "t_9", "repo_path": str(repo),
@@ -362,10 +321,6 @@ class TestRequestChecks:
         with pytest.raises(ValueError, match="dict"):
             analyze_repository("not a dict")
 
-
-# ---------------------------------------------------------------------------
-# The two small helpers
-# ---------------------------------------------------------------------------
 
 class TestGiniAndLabel:
     """gini_coefficient() and imbalance_label() on hand-checkable numbers."""

@@ -1,12 +1,3 @@
-# features.py
-# FairShare - Milestone 13
-# Describe each commit with numbers Lite can score:
-#   code_lines / test_lines / doc_lines   lines added, by kind of file
-#   complexity_delta                      change in cyclomatic complexity (code)
-#   surviving_code / _test / _doc         lines still in the final code
-#   survival                              surviving lines / lines added (0 to 1)
-# Generated files are left out everywhere (see hygiene.py).
-
 import re
 import subprocess
 from collections import Counter
@@ -42,13 +33,8 @@ TEST_ENDINGS = (
     ".spec.js", ".spec.ts", "_test.dart", "_test.go",
 )
 
-# One header line like "<40-hex commit> <line> <line>" starts each blamed line.
 _BLAME_HEADER = re.compile(r"^([0-9a-f]{40}) \d+ \d+", re.MULTILINE)
 
-
-# ---------------------------------------------------------------------------
-# What kind of file is it? (decided from the path alone)
-# ---------------------------------------------------------------------------
 
 def is_doc_path(path: str) -> bool:
     """True for Markdown/reStructuredText/AsciiDoc files and anything in docs/."""
@@ -64,7 +50,7 @@ def is_test_path(path: str) -> bool:
         any(f in TEST_FOLDERS for f in folders)
         or name.lower().startswith("test_")
         or name.lower().endswith(TEST_ENDINGS)
-        or name.endswith(("Test.java", "Tests.java"))   # capital T: 'Latest.java' is not a test
+        or name.endswith(("Test.java", "Tests.java"))
     )
 
 
@@ -79,10 +65,6 @@ def file_kind(path: str) -> str:
     return "code"
 
 
-# ---------------------------------------------------------------------------
-# Reading the repository
-# ---------------------------------------------------------------------------
-
 def read_complexity(repo_path: str) -> list[dict]:
     """
     One row per changed file: how much the file's cyclomatic complexity
@@ -94,18 +76,16 @@ def read_complexity(repo_path: str) -> list[dict]:
     files give 0. Removing code gives a negative number.
     """
     validate_repo_path(repo_path)
-
-    rows: list[dict] = []
-    for commit in Repository(repo_path).traverse_commits():
-        for changed in commit.modified_files:
-            after = sum(m.complexity for m in changed.methods)
-            before = sum(m.complexity for m in changed.methods_before)
-            rows.append({
-                "hash": commit.hash,
-                "path": Path(changed.new_path or changed.old_path).as_posix(),
-                "complexity_delta": after - before,
-            })
-    return rows
+    return [
+        {
+            "hash": commit.hash,
+            "path": Path(changed.new_path or changed.old_path).as_posix(),
+            "complexity_delta": sum(m.complexity for m in changed.methods)
+            - sum(m.complexity for m in changed.methods_before),
+        }
+        for commit in Repository(repo_path).traverse_commits()
+        for changed in commit.modified_files
+    ]
 
 
 def _text_files(repo_path: str) -> list[str]:
@@ -141,7 +121,7 @@ def read_survival(repo_path: str) -> pd.DataFrame:
             ["git", "-C", repo_path, "blame", "-w", "--line-porcelain", "HEAD", "--", path],
             capture_output=True,
         )
-        if blame.returncode != 0:       # e.g. a file that is not in HEAD yet
+        if blame.returncode != 0:
             continue
         kind = file_kind(path)
         for sha in _BLAME_HEADER.findall(blame.stdout.decode("utf-8", "replace")):
@@ -150,10 +130,6 @@ def read_survival(repo_path: str) -> pd.DataFrame:
     rows = [{"hash": h, "kind": k, "surviving_lines": n} for (h, k), n in counts.items()]
     return pd.DataFrame(rows, columns=["hash", "kind", "surviving_lines"])
 
-
-# ---------------------------------------------------------------------------
-# Putting the numbers together
-# ---------------------------------------------------------------------------
 
 def _sum_by_kind(rows: pd.DataFrame, value: str) -> pd.DataFrame:
     """Sum `value` per commit and kind. Index = hash, one column per kind (0 if none)."""
@@ -183,11 +159,8 @@ def build_features(
     """
     added = _sum_by_kind(
         file_changes.assign(kind=file_changes["path"].map(file_kind)), "lines_added"
-    )
-    added.columns = [f"{k}_lines" for k in KINDS]
-
-    kept = _sum_by_kind(survival, "surviving_lines")
-    kept.columns = [f"surviving_{k}" for k in KINDS]
+    ).add_suffix("_lines")
+    kept = _sum_by_kind(survival, "surviving_lines").add_prefix("surviving_")
 
     code_complexity = (
         complexity[complexity["path"].map(file_kind) == "code"]
@@ -200,21 +173,25 @@ def build_features(
         .join(code_complexity, on="hash")
         .join(kept, on="hash")
     )
-    numbers = [c for c in FEATURE_COLUMNS if c not in ("hash", "author_email", "flag", "survival")]
+    numbers = [*added.columns, "complexity_delta", *kept.columns]
     out[numbers] = out[numbers].astype(float).fillna(0).astype(int)
 
-    lines_added = out[[f"{k}_lines" for k in KINDS]].sum(axis=1)
-    lines_kept = out[[f"surviving_{k}" for k in KINDS]].sum(axis=1)
+    lines_added = out[added.columns].sum(axis=1)
+    lines_kept = out[kept.columns].sum(axis=1)
     out["survival"] = (lines_kept / lines_added.where(lines_added > 0)).fillna(0.0).clip(upper=1.0)
     return out
 
 
-def extract_features(repo_path: str) -> pd.DataFrame:
+def extract_features(repo_path: str, commits: list[dict] | None = None) -> pd.DataFrame:
     """
     Read a repository and return one row of features per commit, oldest first
     (columns: FEATURE_COLUMNS). A repository with no commits gives an empty table.
+
+    A caller that has already called read_commits(repo_path) can pass the result
+    as `commits` to save one pass over the repository.
     """
-    commits = read_commits(repo_path)
+    if commits is None:
+        commits = read_commits(repo_path)
     if not commits:
         return pd.DataFrame(columns=FEATURE_COLUMNS)
 

@@ -1,12 +1,3 @@
-# tests/test_flags.py
-# FairShare - Milestone 15
-# Tests for the gaming flags: whitespace-only commits (no_op / whitespace_only)
-# and bursts of tiny commits (split_commits).
-#
-# Run:  python -m pytest tests/test_flags.py -v
-
-import os
-import subprocess
 from datetime import timedelta
 from pathlib import Path
 
@@ -18,26 +9,10 @@ from fairshare_ml.cleaning.hygiene import flag_commits
 from fairshare_ml.cleaning.read_commits import read_commits, read_whitespace_only_commits
 from fairshare_ml.inference import analyze_repository
 from fairshare_ml.scoring.flags import MAX_TINY_LINES, MIN_RUN, split_commit_members
+from tests.helpers import git, init_repo
 
 ALICE = "Alice <alice@uni.edu>"
 BOB = "Bob <bob@uni.edu>"
-
-
-def _git(args: list[str], cwd: str) -> None:
-    """Run  git <args>  inside cwd. Line-ending conversion is switched off."""
-    subprocess.run(
-        ["git"] + args, cwd=cwd, check=True, capture_output=True,
-        env={**os.environ, "GIT_CONFIG_COUNT": "1",
-             "GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "false"},
-    )
-
-
-def _init_repo(path: Path) -> Path:
-    """Create an empty git repository at `path`."""
-    path.mkdir()
-    for args in (["init"], ["config", "user.email", "ci@test.com"], ["config", "user.name", "CI"]):
-        _git(args, cwd=str(path))
-    return path
 
 
 def _commit(repo: Path, author: str, files: dict, when: str = "") -> None:
@@ -45,20 +20,16 @@ def _commit(repo: Path, author: str, files: dict, when: str = "") -> None:
     for name, content in files.items():
         data = content if isinstance(content, bytes) else content.encode("utf-8")
         (repo / name).write_bytes(data)
-    _git(["add", "-A"], cwd=str(repo))
+    git(["add", "-A"], cwd=str(repo))
     date = [f"--date={when}"] if when else []
-    _git(["commit", f"--author={author}", *date, "-m", "change"], cwd=str(repo))
+    git(["commit", f"--author={author}", *date, "-m", "change"], cwd=str(repo))
 
-
-# ---------------------------------------------------------------------------
-# Finding whitespace-only commits
-# ---------------------------------------------------------------------------
 
 V1 = "def f(x):\n    return x\n\nprint(1)\n"
-SPACED = "def f(x):   \n        return x\n\n\n\nprint(1)\n"     # spaces, indent, blank lines
+SPACED = "def f(x):   \n        return x\n\n\n\nprint(1)\n"
 V3 = "def f(x):\n    return x + 1\n\nprint(1)\n"
 V3_CRLF = V3.replace("\n", "\r\n")
-V3_BLANKS = V3_CRLF.replace("\r\n\r\n", "\r\n\r\n\r\n\r\n")      # extra blank lines only
+V3_BLANKS = V3_CRLF.replace("\r\n\r\n", "\r\n\r\n\r\n\r\n")
 
 
 @pytest.fixture
@@ -70,7 +41,7 @@ def whitespace_repo(tmp_path: Path) -> Path:
       c5 extra blank lines only (whitespace only)
       c6 whitespace edit in a.py AND a new real file b.py (NOT whitespace only)
     """
-    repo = _init_repo(tmp_path / "ws")
+    repo = init_repo(tmp_path / "ws")
     _commit(repo, ALICE, {"a.py": V1})
     _commit(repo, BOB, {"a.py": SPACED})
     _commit(repo, ALICE, {"a.py": V3})
@@ -91,7 +62,7 @@ class TestWhitespaceOnlyCommits:
 
     def test_empty_repository_gives_empty_set(self, tmp_path):
         """git fails on a repo without commits; the function returns an empty set."""
-        assert read_whitespace_only_commits(str(_init_repo(tmp_path / "empty"))) == set()
+        assert read_whitespace_only_commits(str(init_repo(tmp_path / "empty"))) == set()
 
     def test_bad_path_raises(self, tmp_path):
         """A folder that does not exist raises FileNotFoundError."""
@@ -141,10 +112,6 @@ class TestNoOpFlag:
         commits, files = _hygiene_tables(**kwargs)
         assert flag_commits(commits, files, frozenset({"h"})).iloc[0]["flag"] == expected
 
-
-# ---------------------------------------------------------------------------
-# Bursts of tiny commits
-# ---------------------------------------------------------------------------
 
 T0 = pd.Timestamp("2026-03-01 10:00:00", tz="UTC")
 
@@ -214,10 +181,6 @@ class TestSplitCommitMembers:
         assert split_commit_members(burst("m_1", [], [])) == set()
 
 
-# ---------------------------------------------------------------------------
-# End to end: the flags in the response
-# ---------------------------------------------------------------------------
-
 def _request(repo: Path) -> dict:
     """A request for Alice (m_1) and Bob (m_2)."""
     return {"team_id": "t_1", "repo_path": str(repo), "members": [
@@ -236,7 +199,7 @@ class TestFlagsInTheResponse:
 
     def test_whitespace_only_flag(self, tmp_path):
         """Bob reformats Alice's file: Bob gets 'whitespace_only', Alice nothing."""
-        repo = _init_repo(tmp_path / "ws")
+        repo = init_repo(tmp_path / "ws")
         _commit(repo, ALICE, {"a.py": V1})
         _commit(repo, ALICE, {"b.py": "y = 2\nz = 3\n"})
         _commit(repo, BOB, {"a.py": SPACED})
@@ -244,7 +207,7 @@ class TestFlagsInTheResponse:
 
     def test_split_commits_flag(self, tmp_path):
         """Bob makes six 1-line commits five minutes apart; Alice makes one big commit."""
-        repo = _init_repo(tmp_path / "split")
+        repo = init_repo(tmp_path / "split")
         _commit(repo, ALICE, {"a.py": "x = 1\n" * 40}, "2026-03-01 09:00:00 +0000")
         for i in range(6):
             _commit(repo, BOB, {"b.py": "y = 2\n" * (i + 1)}, f"2026-03-01 10:{5 * i:02d}:00 +0000")
@@ -252,7 +215,7 @@ class TestFlagsInTheResponse:
 
     def test_same_commits_days_apart_are_not_flagged(self, tmp_path):
         """The same six tiny commits, one per day, are ordinary work."""
-        repo = _init_repo(tmp_path / "slow")
+        repo = init_repo(tmp_path / "slow")
         _commit(repo, ALICE, {"a.py": "x = 1\n" * 40}, "2026-03-01 09:00:00 +0000")
         for i in range(6):
             _commit(repo, BOB, {"b.py": "y = 2\n" * (i + 1)}, f"2026-03-0{i + 2} 10:00:00 +0000")
@@ -260,7 +223,7 @@ class TestFlagsInTheResponse:
 
     def test_flags_are_sorted_and_can_combine(self, tmp_path):
         """A member with several flags gets them in alphabetical order."""
-        repo = _init_repo(tmp_path / "combo")
+        repo = init_repo(tmp_path / "combo")
         _commit(repo, ALICE, {"a.py": "x = 1\n" * 40}, "2026-03-01 09:00:00 +0000")
         _commit(repo, BOB, {"package-lock.json": "{}\n" * 30}, "2026-03-01 09:30:00 +0000")
         for i in range(6):

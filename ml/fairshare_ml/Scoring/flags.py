@@ -1,15 +1,10 @@
-# flags.py
-# FairShare - Milestone 15
-# Gaming flags for the report. A flag is shown openly and never changes a
-# score by itself: the score already ignores these behaviours.
-
 from datetime import timedelta
 
 import pandas as pd
 
-MAX_TINY_LINES = 5                  # a "tiny" commit adds at most this many lines
-MIN_RUN = 5                         # this many tiny commits in a row make a burst
-MAX_GAP = timedelta(minutes=30)     # ...each at most this long after the previous
+MAX_TINY_LINES = 5
+MIN_RUN = 5
+MAX_GAP = timedelta(minutes=30)
 
 LINE_COLUMNS = ["code_lines", "test_lines", "doc_lines"]
 
@@ -34,7 +29,7 @@ def split_commit_members(commits: pd.DataFrame) -> set[str]:
         run, previous = 0, None
         for date, lines in sorted(zip(rows["author_date"], rows["added"]), key=lambda pair: pair[0]):
             if not 0 < lines <= MAX_TINY_LINES:
-                run, previous = 0, None                  # a bigger commit ends the run
+                run, previous = 0, None
                 continue
             run = run + 1 if previous is not None and date - previous <= MAX_GAP else 1
             previous = date

@@ -1,10 +1,3 @@
-# tests/test_lite.py
-# FairShare - Milestone 14
-# Tests for the FairShare-Lite scoring rules, using small hand-made tables.
-# Every expected number can be worked out with a calculator.
-#
-# Run:  python -m pytest tests/test_lite.py -v
-
 import pandas as pd
 import pytest
 
@@ -32,10 +25,6 @@ def points_of(row: dict, column: str = "points") -> float:
     """Score one commit and return one of its point columns."""
     return float(commit_points(make_features([row]))[column].iloc[0])
 
-
-# ---------------------------------------------------------------------------
-# Points per commit
-# ---------------------------------------------------------------------------
 
 class TestCommitPoints:
     """commit_points() turns surviving lines and complexity into points."""
@@ -103,10 +92,6 @@ class TestCommitPoints:
         pd.testing.assert_frame_equal(features, before)
 
 
-# ---------------------------------------------------------------------------
-# Shares and facets
-# ---------------------------------------------------------------------------
-
 def make_points(rows: dict) -> pd.DataFrame:
     """Build a member table from {member_id: (code, test, doc)} points."""
     return pd.DataFrame(
@@ -157,10 +142,6 @@ class TestScoreMembers:
         scores = score_members(make_points({"m_1": (1, 0, 0)}))
         assert list(scores.columns) == ["share", "code", "review", "testing", "docs", "coordination"]
 
-
-# ---------------------------------------------------------------------------
-# Evidence text
-# ---------------------------------------------------------------------------
 
 class TestEvidenceReason:
     """evidence_reason() builds a sentence only from the commit's numbers."""
