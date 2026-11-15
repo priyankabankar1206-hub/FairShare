@@ -3,6 +3,8 @@
 # Reads every commit from a local git repo, saves to CSV, and prints a summary.
 
 import argparse
+import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -149,6 +151,47 @@ def read_file_changes(repo_path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Command-line entry point
 # ---------------------------------------------------------------------------
+def _changed_lines_per_commit(repo_path: str, diff_options: list[str]) -> dict[str, int]:
+    """
+    Total lines added + deleted by each non-merge commit, from `git log --numstat`.
+    `diff_options` are extra git diff options (for example ["-w"]).
+    A repository with no commits gives an empty dict.
+    """
+    result = subprocess.run(
+        ["git", "-C", repo_path, "log", "--no-merges", "--numstat", "--format=%H", *diff_options],
+        capture_output=True,
+    )
+    if result.returncode != 0:          # git fails on a repo without commits
+        return {}
+
+    totals: dict[str, int] = {}
+    current = ""
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        if re.fullmatch(r"[0-9a-f]{40}", line):
+            current = line
+            totals[current] = 0
+        elif "\t" in line:
+            added, deleted, _ = line.split("\t", 2)
+            # Binary files show '-' instead of numbers and count as 0.
+            totals[current] += sum(int(n) for n in (added, deleted) if n.isdigit())
+    return totals
+
+
+def read_whitespace_only_commits(repo_path: str) -> set[str]:
+    """
+    Hashes of commits that change lines, but only whitespace.
+
+    A commit qualifies when git sees changed lines normally, yet none once
+    spaces, tabs, line endings and blank lines are ignored. Re-wrapping lines
+    (what Black or Prettier often do) is not caught: that needs a syntax tree.
+    """
+    validate_repo_path(repo_path)
+    plain = _changed_lines_per_commit(repo_path, [])
+    ignoring_whitespace = _changed_lines_per_commit(repo_path, ["-w", "--ignore-blank-lines"])
+    return {
+        sha for sha, total in plain.items()
+        if total > 0 and ignoring_whitespace.get(sha, 0) == 0
+    }
 
 def main() -> None:
     """

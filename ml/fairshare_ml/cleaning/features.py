@@ -20,6 +20,7 @@ from fairshare_ml.cleaning.read_commits import (
     FILE_CHANGE_COLUMNS,
     read_commits,
     read_file_changes,
+    read_whitespace_only_commits,
     validate_repo_path,
 )
 
@@ -218,7 +219,10 @@ def extract_features(repo_path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=FEATURE_COLUMNS)
 
     file_changes = pd.DataFrame(read_file_changes(repo_path), columns=FILE_CHANGE_COLUMNS)
-    flagged = flag_commits(pd.DataFrame(commits), file_changes)
+    flagged = flag_commits(
+        pd.DataFrame(commits), file_changes,
+        frozenset(read_whitespace_only_commits(repo_path)),
+    )
     complexity = pd.DataFrame(
         read_complexity(repo_path), columns=["hash", "path", "complexity_delta"]
     )

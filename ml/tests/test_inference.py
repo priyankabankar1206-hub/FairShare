@@ -255,6 +255,7 @@ class TestLiteRules:
         """Bob adds trailing spaces to Alice's 4 lines: Alice keeps all the credit."""
         repo = _init_repo(tmp_path / "spaces")
         _commit(repo, "a.py", 4, ALICE, text="x = 1")
+        _commit(repo, "b.py", 2, ALICE, text="y = 2")     # Alice needs 2 real commits
         _overwrite(repo, "a.py", "x = 1   \n" * 4, BOB)
         response = analyze_repository(make_request(repo))
         assert share_of(response, "m_1") == 1.0

@@ -77,11 +77,16 @@ def flag_file_changes(file_changes: pd.DataFrame) -> pd.DataFrame:
     return file_changes.assign(is_generated=is_generated)
 
 
-def flag_commits(commits: pd.DataFrame, file_changes: pd.DataFrame) -> pd.DataFrame:
+def flag_commits(
+    commits: pd.DataFrame,
+    file_changes: pd.DataFrame,
+    whitespace_only: frozenset = frozenset(),
+) -> pd.DataFrame:
     """
     Add hygiene columns to the commits table (one row in, one row out).
 
-    Input : commits (commits.csv) and file_changes (file_changes.csv).
+        Input : commits (commits.csv) and file_changes (file_changes.csv), plus
+            optionally the hashes of whitespace-only commits (these get 'no_op').
     Output: the commits table plus
               clean_insertions - lines added, generated files left out
               clean_deletions  - lines deleted, generated files left out
@@ -118,6 +123,8 @@ def flag_commits(commits: pd.DataFrame, file_changes: pd.DataFrame) -> pd.DataFr
             return "empty"
         if row["clean_files"] == 0:
             return "generated"
+        if row["hash"] in whitespace_only:
+            return "no_op"
         return "substantive"
 
     # apply() on an empty table would not return a column, so skip it then.

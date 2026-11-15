@@ -9,6 +9,7 @@ import pandas as pd
 
 from fairshare_ml.cleaning.features import extract_features
 from fairshare_ml.cleaning.read_commits import read_commits
+from fairshare_ml.scoring.flags import split_commit_members
 from fairshare_ml.scoring.lite import (
     MODEL_VERSION,
     commit_points,
@@ -110,8 +111,10 @@ def analyze_repository(request: dict) -> dict:
     is not enough data (fewer than 2 counted commits): then every share and
     facet is 0.0 and 'warnings' contains 'insufficient_data'.
     'unmapped_authors' is added when a commit author is not in the member
-    list. A member gets the flag 'generated_files' if they committed
-    generated files (which are left out of the score).
+    list. Member flags (shown openly, they do not change the score):
+    'generated_files' (committed lock files or build output), 'whitespace_only'
+    (a commit that only changed whitespace) and 'split_commits' (a burst of
+    tiny commits).
 
     Raises ValueError for a malformed request, and the errors of
     read_commits() (FileNotFoundError, NotADirectoryError, ValueError) for a
@@ -134,8 +137,14 @@ def analyze_repository(request: dict) -> dict:
     real_people = ~scored["flag"].isin(["bot", "merge"])
     has_unmapped = bool((real_people & scored["member_id"].isna()).any())
     counted = scored[(scored["flag"] == "substantive") & scored["member_id"].notna()]
-    generated_by = set(scored.loc[scored["flag"] == "generated", "member_id"].dropna())
-
+    dates = {c["hash"]: c["author_date"] for c in commits}
+    flagged_by = {
+        "generated_files": set(scored.loc[scored["flag"] == "generated", "member_id"].dropna()),
+        "whitespace_only": set(scored.loc[scored["flag"] == "no_op", "member_id"].dropna()),
+        "split_commits": split_commit_members(
+            counted.assign(author_date=counted["hash"].map(dates))
+        ),
+    }
     points = counted.groupby("member_id")[POINT_COLUMNS].sum().reindex(member_ids, fill_value=0.0)
     scores = score_members(points)
     insufficient = len(counted) < 2 or points.to_numpy().sum() == 0
@@ -147,7 +156,7 @@ def analyze_repository(request: dict) -> dict:
             "member_id": member_id,
             "share": float(scores.loc[member_id, "share"]),
             "facets": {name: float(scores.loc[member_id, name]) for name in FACETS},
-            "flags": ["generated_files"] if member_id in generated_by else [],
+            "flags": sorted(name for name, who in flagged_by.items() if member_id in who),
             "evidence": _evidence(counted[counted["member_id"] == member_id]),
         }
         for member_id in member_ids
