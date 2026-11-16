@@ -27,6 +27,7 @@ from app.schemas.identity import (
     UnmatchedIdentity,
     IdentityMappingListResponse,
 )
+from app.schemas.aiml_contract import AIMLMemberInput
 from app.schemas.github import MinedCommit
 from app.services.audit_service import get_audit_service
 
@@ -197,6 +198,13 @@ class IdentityMappingService:
                     f"→ member '{matched_member_id}' in team '{team_id}'"
                 )
 
+        if created > 0:
+            try:
+                from app.services.aiml.service import invalidate_cached_analysis
+                invalidate_cached_analysis(team_id)
+            except Exception as exc:
+                logger.debug(f"[IdentityService] Could not invalidate cache for team '{team_id}': {exc}")
+
         return created
 
     # ------------------------------------------------------------------
@@ -272,6 +280,47 @@ class IdentityMappingService:
             mappings=all_mappings,
             unmatched=unmatched,
         )
+
+    def get_team_aiml_members(self, team_id: str) -> List[AIMLMemberInput]:
+        """Aggregate actual registered team members and their mapped non-bot Git emails.
+
+        Rules:
+          - Only returns actually registered members in the team roster.
+          - Never fabricates or invents fake members.
+          - Excludes any identities flagged as is_bot=True.
+          - Collects all mapped Git emails and registered profile emails.
+          - Returns an empty list if no members are registered.
+        """
+        roster = sorted(self._rosters.get(team_id, set()))
+        if not roster:
+            return []
+
+        team_mappings = self._mappings.get(team_id, {})
+        team_meta = self._member_meta.get(team_id, {})
+
+        # Group non-bot mapped emails by member_id
+        member_emails: Dict[str, set] = {m_id: set() for m_id in roster}
+        for record in team_mappings.values():
+            if record.is_bot:
+                continue
+            if record.member_id in member_emails and record.git_email:
+                email = record.git_email.strip().lower()
+                if email:
+                    member_emails[record.member_id].add(email)
+
+        # Include registered profile email if present
+        for m_id in roster:
+            meta_email = team_meta.get(m_id, {}).get("email", "").strip().lower()
+            if meta_email:
+                member_emails[m_id].add(meta_email)
+
+        return [
+            AIMLMemberInput(
+                member_id=m_id,
+                emails=sorted(member_emails[m_id]),
+            )
+            for m_id in roster
+        ]
 
     # ------------------------------------------------------------------
     # Manual Mapping (Instructor Action)
@@ -370,6 +419,14 @@ class IdentityMappingService:
             f"[IdentityService] Manual mapping created: '{git_name}' <{git_email}> "
             f"→ '{member_id}' in team '{team_id}' by instructor '{actor_id}'"
         )
+
+        # Invalidate any cached analysis scores since member attribution has changed
+        try:
+            from app.services.aiml.service import invalidate_cached_analysis
+            invalidate_cached_analysis(team_id)
+        except Exception as exc:
+            logger.debug(f"[IdentityService] Could not invalidate cache for team '{team_id}': {exc}")
+
         return record, True
 
     def clear_team(self, team_id: str) -> None:
@@ -378,6 +435,11 @@ class IdentityMappingService:
         self._rosters.pop(team_id, None)
         self._member_meta.pop(team_id, None)
         self._commit_counts.pop(team_id, None)
+        try:
+            from app.services.aiml.service import invalidate_cached_analysis
+            invalidate_cached_analysis(team_id)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

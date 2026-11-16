@@ -214,6 +214,13 @@ class IngestionOrchestrator:
             )
             self.save_checkpoint(team_id, final_checkpoint)
 
+            # Invalidate cached analysis results since new repository data was synced
+            try:
+                from app.services.aiml.service import invalidate_cached_analysis
+                invalidate_cached_analysis(team_id)
+            except Exception:
+                pass
+
             # Step 7: Finalize job status
             self.jobs.update_job(
                 job_id,

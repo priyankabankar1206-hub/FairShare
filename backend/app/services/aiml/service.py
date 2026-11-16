@@ -5,11 +5,25 @@ handling errors, and rigorously validating raw responses against Section 6.4.
 """
 
 from typing import Callable, Optional, Dict, Any
+import json
+import logging
+import re
+from pathlib import Path
 import httpx
 from pydantic import ValidationError
 
 from app.core.config import settings
-from app.schemas.aiml_contract import AIMLAnalysisRequest, AIMLAnalysisResponse
+
+logger = logging.getLogger("fairshare.aiml")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+
+_SAFE_TEAM_ID_REGEX = re.compile(r"^[a-zA-Z0-9_\-]+$")
+from app.schemas.aiml_contract import (
+    AIMLAnalysisRequest,
+    AIMLAnalysisResponse,
+    validate_response_members,
+)
 from app.services.aiml.interface import (
     BaseAIMLService,
     AIMLServiceError,
@@ -48,6 +62,10 @@ class AIMLIntegrationService(BaseAIMLService):
     def register_model_callable(self, func: Callable[[Dict[str, Any]], Dict[str, Any]]) -> None:
         """Register the Python function from the AI/ML teammate's package."""
         self._in_process_callable = func
+
+    def has_model_callable(self) -> bool:
+        """Return True if an in-process model callable has been registered."""
+        return self._in_process_callable is not None
 
     def validate_raw_response(self, raw_data: Any) -> AIMLAnalysisResponse:
         """Validate raw dictionary data against the Section 6.4 contract.
@@ -106,7 +124,14 @@ class AIMLIntegrationService(BaseAIMLService):
         else:
             raise AIMLServiceError(f"Unsupported AIML_INTEGRATION_MODE: '{self.mode}'")
 
-        return self.validate_raw_response(raw_result)
+        validated_response = self.validate_raw_response(raw_result)
+
+        try:
+            validate_response_members(request, validated_response)
+        except ValueError as exc:
+            raise AIMLValidationError(str(exc)) from exc
+
+        return validated_response
 
 
 # Singleton factory for FastAPI dependency injection
@@ -119,3 +144,101 @@ def get_aiml_service() -> AIMLIntegrationService:
     if _aiml_service_instance is None:
         _aiml_service_instance = AIMLIntegrationService()
     return _aiml_service_instance
+
+
+# ==============================================================================
+# Analysis Result Caching Layer (Part A)
+# ==============================================================================
+
+def validate_safe_team_id(team_id: str) -> str:
+    """Validate team_id against path traversal and illegal characters."""
+    if not team_id or not isinstance(team_id, str):
+        raise ValueError("Invalid team_id: must be a non-empty string.")
+    cleaned = team_id.strip()
+    if not _SAFE_TEAM_ID_REGEX.match(cleaned) or ".." in cleaned:
+        raise ValueError(f"Invalid team_id '{team_id}': contains unsafe characters.")
+    return cleaned
+
+
+def get_analysis_cache_path(team_id: str, base_data_dir: str = "data") -> Path:
+    """Resolve the filesystem path for cached analysis results."""
+    safe_id = validate_safe_team_id(team_id)
+    cache_dir = Path(base_data_dir) / safe_id / "analysis"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / "latest_scores.json"
+
+
+def save_cached_analysis(
+    team_id: str,
+    response: AIMLAnalysisResponse,
+    base_data_dir: str = "data",
+) -> Path:
+    """Persist validated AIMLAnalysisResponse to cache with team_id validation."""
+    safe_id = validate_safe_team_id(team_id)
+    if response.team_id != safe_id:
+        raise ValueError(
+            f"Response team_id '{response.team_id}' does not match requested team_id '{safe_id}'."
+        )
+    target_path = get_analysis_cache_path(safe_id, base_data_dir=base_data_dir)
+    with open(target_path, "w", encoding="utf-8") as f:
+        json.dump(response.model_dump(mode="json"), f, indent=2)
+    logger.debug(f"[AIML Cache] Cached analysis for team '{safe_id}' at {target_path}")
+    return target_path
+
+
+def load_cached_analysis(
+    team_id: str,
+    base_data_dir: str = "data",
+) -> Optional[AIMLAnalysisResponse]:
+    """Retrieve and validate cached analysis from filesystem.
+
+    Validates:
+      1. team_id is safe against path traversal.
+      2. File exists and parses cleanly via AIMLAnalysisResponse.
+      3. Cached team_id matches requested team_id.
+    """
+    try:
+        safe_id = validate_safe_team_id(team_id)
+    except ValueError:
+        return None
+
+    target_path = Path(base_data_dir) / safe_id / "analysis" / "latest_scores.json"
+    if not target_path.exists():
+        return None
+
+    try:
+        with open(target_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+        cached = AIMLAnalysisResponse.model_validate(raw_data)
+        if cached.team_id != safe_id:
+            logger.warning(
+                f"[AIML Cache] Cache for '{safe_id}' contained mismatched team_id '{cached.team_id}'. Invalidating."
+            )
+            invalidate_cached_analysis(safe_id, base_data_dir=base_data_dir)
+            return None
+        return cached
+    except Exception as exc:
+        logger.warning(f"[AIML Cache] Failed to load/validate cache for '{safe_id}': {exc}")
+        return None
+
+
+def invalidate_cached_analysis(
+    team_id: str,
+    base_data_dir: str = "data",
+) -> bool:
+    """Safely invalidate/remove cached analysis for a team."""
+    try:
+        safe_id = validate_safe_team_id(team_id)
+    except ValueError:
+        return False
+
+    target_path = Path(base_data_dir) / safe_id / "analysis" / "latest_scores.json"
+    if target_path.exists():
+        try:
+            target_path.unlink()
+            logger.info(f"[AIML Cache] Invalidated cached analysis for team '{safe_id}'.")
+            return True
+        except OSError as exc:
+            logger.warning(f"[AIML Cache] Failed to delete cache file for '{safe_id}': {exc}")
+            return False
+    return False
