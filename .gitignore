@@ -8,3 +8,13 @@ __pycache__/
 # IDE/editor files
 .vscode/
 .idea/
+# Flutter generated files
+.dart_tool/
+build/
+.packages
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Android local configuration
+/android/local.properties
