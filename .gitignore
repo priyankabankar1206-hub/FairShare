@@ -21,6 +21,6 @@ build/
 *.swo
 
 # FairShare Local file data stores (Section 7.3)
-data/
-models/
-temp/
+/data/
+/models/
+/temp/
