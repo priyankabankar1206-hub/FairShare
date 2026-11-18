@@ -173,3 +173,167 @@ def test_unauthenticated_deletion_unauthorized(client):
     """Deleting team data without Authorization header must return HTTP 401."""
     del_res = client.delete("/api/v1/teams/team_any/data")
     assert del_res.status_code == 401
+
+
+# ==============================================================================
+# 4. Database-Backed Consent & Identity Verification Tests
+# ==============================================================================
+
+def test_consent_student_cannot_consent_for_other_student(client):
+    """Student cannot record consent for another student (HTTP 403)."""
+    team_id = "team_cross_consent"
+    token = create_access_token(
+        subject="usr_student_eve",
+        role="student",
+        team_ids=[team_id],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    payload = {
+        "user_id": "usr_student_frank",
+        "consent_given": True,
+        "consent_version": "v1.0",
+    }
+    response = client.post(f"/api/v1/teams/{team_id}/consent", json=payload, headers=headers)
+    assert response.status_code == 403
+    assert "You can only record consent for yourself" in response.json()["detail"]
+
+
+def test_consent_database_unavailable_returns_503(client):
+    """When database is unavailable (None), consent endpoints return HTTP 503."""
+    from app.main import app
+    from app.db.session import get_db
+
+    team_id = "team_db_unavailable_test"
+    token = create_access_token(
+        subject="usr_test_student",
+        role="student",
+        team_ids=[team_id],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Override get_db to simulate database connection loss
+    def override_get_db():
+        yield None
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        # 1. Recording consent returns 503
+        payload = {
+            "user_id": "usr_test_student",
+            "consent_given": True,
+            "consent_version": "1.0",
+        }
+        res_post = client.post(f"/api/v1/teams/{team_id}/consent", json=payload, headers=headers)
+        assert res_post.status_code == 503
+        assert "Database unavailable" in res_post.json()["detail"]
+
+        # 2. Checking consent status returns 503
+        res_get = client.get(f"/api/v1/teams/{team_id}/consent", headers=headers)
+        assert res_get.status_code == 503
+        assert "Database unavailable" in res_get.json()["detail"]
+
+        # 3. Guard dependency (require_team_consent) returns 503
+        res_scores = client.get(f"/api/v1/teams/{team_id}/scores", headers=headers)
+        assert res_scores.status_code == 503
+        assert "Database unavailable" in res_scores.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_database_backed_consent_lifecycle(client):
+    """Verify full DB-backed consent lifecycle with real PostgreSQL records."""
+    import uuid
+    from app.db.session import get_engine, SessionLocal
+    from app.models.team import User, Team, TeamMember
+
+    engine = get_engine()
+    db = SessionLocal()
+
+    team_id = f"t_db_test_{uuid.uuid4().hex[:8]}"
+    u1_id = f"usr_db_1_{uuid.uuid4().hex[:8]}"
+    u2_id = f"usr_db_2_{uuid.uuid4().hex[:8]}"
+
+    try:
+        # Create users
+        u1 = User(id=u1_id, github_login=f"gh_{u1_id}", role="student")
+        u2 = User(id=u2_id, github_login=f"gh_{u2_id}", role="student")
+        db.add_all([u1, u2])
+
+        # Create team
+        team = Team(id=team_id, name="DB Test Team", course="CS 401", repo_url="https://github.com/db/test")
+        db.add(team)
+
+        # Create members with NO consent initially
+        m1 = TeamMember(id=f"tm_{uuid.uuid4().hex[:8]}", team_id=team_id, user_id=u1_id, consent_at=None)
+        m2 = TeamMember(id=f"tm_{uuid.uuid4().hex[:8]}", team_id=team_id, user_id=u2_id, consent_at=None)
+        db.add_all([m1, m2])
+        db.commit()
+
+        # Tokens
+        t1 = create_access_token(subject=u1_id, role="student", team_ids=[team_id])
+        t2 = create_access_token(subject=u2_id, role="student", team_ids=[team_id])
+        h1 = {"Authorization": f"Bearer {t1}"}
+        h2 = {"Authorization": f"Bearer {t2}"}
+
+        # 1. Check status: 0 of 2 consented
+        status_res = client.get(f"/api/v1/teams/{team_id}/consent", headers=h1)
+        assert status_res.status_code == 200
+        data = status_res.json()
+        assert data["all_members_consented"] is False
+        assert data["consented_count"] == 0
+        assert data["total_registered_count"] == 2
+
+        # 2. Analysis blocked
+        scores_res = client.get(f"/api/v1/teams/{team_id}/scores", headers=h1)
+        assert scores_res.status_code == 403
+
+        # 3. User 1 grants consent
+        res_c1 = client.post(
+            f"/api/v1/teams/{team_id}/consent",
+            json={"user_id": u1_id, "consent_given": True, "consent_version": "1.0"},
+            headers=h1,
+        )
+        assert res_c1.status_code == 200
+        assert res_c1.json()["status"] == "consented"
+
+        # 4. Check status: 1 of 2 consented -> all_members_consented still False
+        status_res = client.get(f"/api/v1/teams/{team_id}/consent", headers=h1)
+        assert status_res.status_code == 200
+        assert status_res.json()["all_members_consented"] is False
+        assert status_res.json()["consented_count"] == 1
+
+        # 5. Analysis still blocked
+        scores_res = client.get(f"/api/v1/teams/{team_id}/scores", headers=h2)
+        assert scores_res.status_code == 403
+
+        # 6. Attempting to record consent for unknown user returns 404
+        bad_res = client.post(
+            f"/api/v1/teams/{team_id}/consent",
+            json={"user_id": "usr_nonexistent", "consent_given": True, "consent_version": "1.0"},
+            headers={"Authorization": f"Bearer {create_access_token(subject='usr_nonexistent', role='student', team_ids=[team_id])}"},
+        )
+        assert bad_res.status_code == 404
+        assert "not a registered member" in bad_res.json()["detail"]
+
+        # 7. User 2 grants consent
+        res_c2 = client.post(
+            f"/api/v1/teams/{team_id}/consent",
+            json={"user_id": u2_id, "consent_given": True, "consent_version": "1.0"},
+            headers=h2,
+        )
+        assert res_c2.status_code == 200
+
+        # 8. All consented!
+        status_res = client.get(f"/api/v1/teams/{team_id}/consent", headers=h1)
+        assert status_res.status_code == 200
+        assert status_res.json()["all_members_consented"] is True
+        assert status_res.json()["consented_count"] == 2
+
+    finally:
+        # Clean up database
+        db.query(TeamMember).filter(TeamMember.team_id == team_id).delete()
+        db.query(Team).filter(Team.id == team_id).delete()
+        db.query(User).filter(User.id.in_([u1_id, u2_id])).delete()
+        db.commit()
+        db.close()

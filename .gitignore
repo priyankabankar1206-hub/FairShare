@@ -8,3 +8,10 @@ __pycache__/
 # IDE/editor files
 .vscode/
 .idea/
+
+# Database backups
+backend/backups/
+*.dump
+
+# Runtime logs
+backend/logs/

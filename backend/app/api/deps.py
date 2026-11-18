@@ -12,6 +12,7 @@ Implements:
 from typing import Optional, List, Union, Callable
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 
 from app.core.security import (
     decode_access_token,
@@ -19,6 +20,7 @@ from app.core.security import (
     TokenInvalidError,
 )
 from app.schemas.auth import CurrentUser, UserRole
+from app.db.session import get_db
 from app.services.consent_service import get_consent_service, ConsentService
 from app.services.audit_service import get_audit_service, AuditLogService
 
@@ -146,6 +148,7 @@ async def verify_team_access(
 async def require_team_consent(
     team_id: str,
     current_user: CurrentUser = Depends(verify_team_access),
+    db: Optional[Session] = Depends(get_db),
 ) -> CurrentUser:
     """Ensure all required team members have provided consent before ingestion/analysis.
 
@@ -154,10 +157,25 @@ async def require_team_consent(
     "No analysis before consent_at is set"
 
     Raises:
+        HTTPException 503: If database cannot be accessed.
         HTTPException 403: If team consent has not been recorded by all members.
     """
+    if db is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable. Cannot verify consent.",
+        )
+
     consent_service = get_consent_service()
-    if not consent_service.is_team_consented(team_id):
+    try:
+        is_consented = consent_service.is_team_consented(team_id, db=db)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database unavailable. Cannot verify consent.",
+        ) from exc
+
+    if not is_consented:
         audit_service = get_audit_service()
         audit_service.log_action(
             actor_id=current_user.id,

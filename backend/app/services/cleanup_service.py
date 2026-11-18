@@ -16,7 +16,7 @@ import os
 import shutil
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.schemas.consent import TeamDeletionResponse
 from app.services.audit_service import get_audit_service, AuditLogService
 from app.services.consent_service import get_consent_service, ConsentService
@@ -54,6 +54,11 @@ class TeamDataCleanupService:
                     deleted_paths.append(str(clone_dir))
 
         return deleted_paths
+
+    def cleanup_orphaned_clones(self, max_age_seconds: int = 3600) -> Dict[str, Any]:
+        """Safely clean up orphaned temporary repository clones and report status accurately."""
+        from app.services.storage import storage_manager
+        return storage_manager.cleanup_orphaned_clones(max_age_seconds=max_age_seconds)
 
     def delete_team_data(
         self,
